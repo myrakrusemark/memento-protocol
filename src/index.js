@@ -105,6 +105,17 @@ function escapeRegex(str) {
   return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Check if all words in `query` appear somewhere in `text`.
+ * Case-insensitive. Used for skip-check matching.
+ */
+function matchesAllWords(query, text) {
+  const queryWords = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (queryWords.length === 0) return false;
+  const textLower = text.toLowerCase();
+  return queryWords.every((word) => textLower.includes(word));
+}
+
 /** Map section shorthand names to actual heading text. */
 const SECTION_MAP = {
   active_work: "Active Work",
@@ -594,9 +605,8 @@ server.tool(
       writeSkipIndex(ws, entries);
     }
 
-    const queryLower = query.toLowerCase();
     const match = entries.find(
-      (e) => e.item.toLowerCase().includes(queryLower) || queryLower.includes(e.item.toLowerCase())
+      (e) => matchesAllWords(query, e.item) || matchesAllWords(e.item, query)
     );
 
     if (match) {
@@ -761,6 +771,7 @@ export {
   extractSection,
   replaceSection,
   escapeRegex,
+  matchesAllWords,
   detectWorkspace,
   SECTION_MAP,
   resolveSectionName,

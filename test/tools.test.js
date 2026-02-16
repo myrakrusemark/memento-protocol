@@ -278,6 +278,42 @@ describe("memento_skip_check", () => {
     assert.ok(text(result).includes("Proceed"));
   });
 
+  it("matches by word-level inclusion, not substring", async () => {
+    // Add a long skip item
+    await callTool("memento_skip_add", {
+      item: "Push memento-protocol to GitHub",
+      reason: "Not ready yet",
+      expires: "2099-12-31",
+      path: testPath,
+    });
+
+    // Short query with words that appear in the item — should match
+    const result = await callTool("memento_skip_check", {
+      query: "push github",
+      path: testPath,
+    });
+    assert.ok(text(result).includes("SKIP"));
+    assert.ok(text(result).includes("Push memento-protocol to GitHub"));
+  });
+
+  it("does not match when query words are absent from item", async () => {
+    const result = await callTool("memento_skip_check", {
+      query: "push gitlab",
+      path: testPath,
+    });
+    assert.ok(text(result).includes("Proceed"));
+  });
+
+  it("matches when item words are a subset of query words", async () => {
+    // The reverse direction: item "vector search" vs query "implement vector search feature"
+    const result = await callTool("memento_skip_check", {
+      query: "implement vector search feature",
+      path: testPath,
+    });
+    assert.ok(text(result).includes("SKIP"));
+    assert.ok(text(result).includes("vector search"));
+  });
+
   it("auto-purges expired entries", async () => {
     // Add an already-expired skip entry
     await callTool("memento_skip_add", {

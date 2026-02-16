@@ -14,6 +14,7 @@ import {
   extractSection,
   replaceSection,
   escapeRegex,
+  matchesAllWords,
   SECTION_MAP,
   resolveSectionName,
 } from "../src/index.js";
@@ -212,6 +213,48 @@ describe("escapeRegex", () => {
 
   it("passes through plain strings unchanged", () => {
     assert.equal(escapeRegex("hello world"), "hello world");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// matchesAllWords
+// ---------------------------------------------------------------------------
+
+describe("matchesAllWords", () => {
+  it("matches when all query words appear in text", () => {
+    assert.ok(matchesAllWords("push github", "Push memento-protocol to GitHub"));
+  });
+
+  it("is case-insensitive", () => {
+    assert.ok(matchesAllWords("PUSH GITHUB", "push memento-protocol to github"));
+  });
+
+  it("fails when a query word is missing from text", () => {
+    assert.ok(!matchesAllWords("push gitlab", "Push memento-protocol to GitHub"));
+  });
+
+  it("matches single-word query against multi-word text", () => {
+    assert.ok(matchesAllWords("aurora", "Skip aurora forecast checks"));
+  });
+
+  it("matches when query and text are identical", () => {
+    assert.ok(matchesAllWords("vector search", "vector search"));
+  });
+
+  it("returns false for empty query", () => {
+    assert.ok(!matchesAllWords("", "some text"));
+  });
+
+  it("returns false for whitespace-only query", () => {
+    assert.ok(!matchesAllWords("   ", "some text"));
+  });
+
+  it("matches regardless of word order", () => {
+    assert.ok(matchesAllWords("github push", "Push memento-protocol to GitHub"));
+  });
+
+  it("fails when text is empty", () => {
+    assert.ok(!matchesAllWords("push", ""));
   });
 });
 
