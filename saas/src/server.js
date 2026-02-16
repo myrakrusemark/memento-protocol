@@ -1,0 +1,74 @@
+/**
+ * Memento SaaS API Server
+ *
+ * Hono-based REST API that mirrors the MCP tool interface.
+ * Designed to be the proprietary hosted backend — separate from
+ * the open-source MCP reference server.
+ *
+ * All responses use MCP tool output format:
+ *   { "content": [{ "type": "text", "text": "..." }] }
+ */
+
+import { Hono } from "hono";
+import { serve } from "@hono/node-server";
+import { getControlDb, initSchema } from "./db/connection.js";
+import { authMiddleware } from "./middleware/auth.js";
+import { workspaceMiddleware } from "./middleware/workspace.js";
+import workspaces from "./routes/workspaces.js";
+import memories from "./routes/memories.js";
+import workingMemory from "./routes/working-memory.js";
+import skipList from "./routes/skip-list.js";
+import consolidation from "./routes/consolidation.js";
+import identity from "./routes/identity.js";
+import health from "./routes/health.js";
+
+export function createApp() {
+  const app = new Hono();
+
+  // Health check (unauthenticated)
+  app.get("/", (c) => {
+    return c.json({
+      content: [{ type: "text", text: "Memento SaaS API v0.1.0" }],
+    });
+  });
+
+  // All /v1/* routes require auth + workspace resolution
+  const v1 = new Hono();
+  v1.use("*", authMiddleware());
+  v1.use("*", workspaceMiddleware());
+
+  // Mount route groups
+  v1.route("/workspaces", workspaces);
+  v1.route("/memories", memories);
+  v1.route("/working-memory", workingMemory);
+  v1.route("/skip-list", skipList);
+  v1.route("/consolidate", consolidation);
+  v1.route("/identity", identity);
+  v1.route("/health", health);
+
+  app.route("/v1", v1);
+
+  return app;
+}
+
+// ---------------------------------------------------------------------------
+// Start server when run directly
+// ---------------------------------------------------------------------------
+
+const isMainModule =
+  process.argv[1] &&
+  (process.argv[1].endsWith("/server.js") || process.argv[1].endsWith("\\server.js"));
+
+if (isMainModule) {
+  const port = parseInt(process.env.PORT || "3001", 10);
+
+  // Initialize control plane schema
+  const db = getControlDb();
+  await initSchema(db, "all");
+
+  const app = createApp();
+
+  serve({ fetch: app.fetch, port }, () => {
+    console.log(`Memento SaaS API running on http://localhost:${port}`);
+  });
+}
