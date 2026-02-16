@@ -218,6 +218,21 @@ describe("memento_recall", () => {
     assert.ok(text(result).includes("No memories found"));
   });
 
+  it("finds memories by tag even when tag is absent from content", async () => {
+    await callTool("memento_store", {
+      content: "Jupiter has 95 known moons",
+      tags: ["astronomy", "planets"],
+      type: "fact",
+      path: testPath,
+    });
+    const result = await callTool("memento_recall", {
+      query: "astronomy",
+      path: testPath,
+    });
+    assert.ok(text(result).includes("Found"));
+    assert.ok(text(result).includes("Jupiter"));
+  });
+
   it("respects limit parameter", async () => {
     // Store several memories
     for (let i = 0; i < 5; i++) {

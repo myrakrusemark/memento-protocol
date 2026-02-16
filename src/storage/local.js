@@ -143,9 +143,11 @@ export class LocalStorageAdapter extends StorageInterface {
           if (!hasTag) continue;
         }
 
-        // Keyword match -- count how many query terms appear in content
-        const contentLower = memory.content.toLowerCase();
-        const hits = queryTerms.filter((term) => contentLower.includes(term)).length;
+        // Keyword match -- count how many query terms appear in content or tags
+        const searchable = [memory.content, ...(memory.tags || [])]
+          .join(" ")
+          .toLowerCase();
+        const hits = queryTerms.filter((term) => searchable.includes(term)).length;
         if (hits === 0) continue;
 
         results.push({ memory, score: hits / queryTerms.length });
