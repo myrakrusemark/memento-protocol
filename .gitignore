@@ -7,6 +7,9 @@ node_modules/
 .env.local
 .env.*.local
 
+# SQLite databases
+*.db
+
 # IDE
 .idea/
 .vscode/
