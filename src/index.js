@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 /**
- * Memento Protocol — Reference MCP Server
+ * Memento Protocol -- Reference MCP Server
  *
  * Persistent memory for AI agents. File-based, zero external dependencies
  * beyond the MCP SDK. Designed for Claude Code but works with any
@@ -9,9 +9,9 @@
  *
  * Storage layout:
  *   .memento/
- *   ├── working-memory.md    — The core document. Read every session.
- *   ├── memories/            — Discrete stored memories (JSON per entry)
- *   └── skip-index.json      — Queryable skip list index
+ *   ├── working-memory.md    -- The core document. Read every session.
+ *   ├── memories/            -- Discrete stored memories (JSON per entry)
+ *   └── skip-index.json      -- Queryable skip list index
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -19,11 +19,30 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { LocalStorageAdapter } from "./storage/local.js";
+import { HostedStorageAdapter } from "./storage/hosted.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ---------------------------------------------------------------------------
+// Storage adapter — switches based on environment variables
+// ---------------------------------------------------------------------------
+
+let storage;
+if (process.env.MEMENTO_API_KEY) {
+  storage = new HostedStorageAdapter({
+    apiKey: process.env.MEMENTO_API_KEY,
+    apiUrl: process.env.MEMENTO_API_URL || "http://localhost:3001",
+    workspace: process.env.MEMENTO_WORKSPACE || "default",
+  });
+} else {
+  storage = new LocalStorageAdapter();
+}
+
+/** Whether we're running in hosted mode (API key is set). */
+const isHosted = !!process.env.MEMENTO_API_KEY;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -95,7 +114,7 @@ function replaceSection(markdown, sectionName, newContent) {
   );
   const match = markdown.match(pattern);
   if (!match) {
-    // Section not found — append it
+    // Section not found -- append it
     return markdown.trimEnd() + `\n\n---\n\n## ${sectionName}\n\n${newContent}\n`;
   }
   return markdown.replace(pattern, `$1\n${newContent}\n`);
@@ -151,6 +170,11 @@ function detectWorkspace() {
   return path.join(process.cwd(), ".memento");
 }
 
+/** Resolve workspace path from tool arguments. */
+function resolveWs(customPath) {
+  return customPath ? workspacePath(customPath) : detectWorkspace();
+}
+
 // ---------------------------------------------------------------------------
 // Server
 // ---------------------------------------------------------------------------
@@ -164,10 +188,6 @@ const server = new McpServer({
 // Tool: memento_init
 // ---------------------------------------------------------------------------
 
-/**
- * Initialize a new Memento workspace.
- * Creates the storage directory structure and working memory from template.
- */
 server.tool(
   "memento_init",
   "Initialize a new Memento workspace with working memory template and storage directories",
@@ -175,45 +195,36 @@ server.tool(
     path: z.string().optional().describe("Workspace path (default: .memento/ in cwd)"),
   },
   async ({ path: customPath }) => {
-    const ws = workspacePath(customPath);
+    const ws = isHosted ? null : workspacePath(customPath);
+    const result = await storage.initWorkspace(ws);
 
-    if (fs.existsSync(path.join(ws, "working-memory.md"))) {
+    if (result.error) {
       return {
-        content: [
-          {
-            type: "text",
-            text: `Workspace already exists at ${ws}. Use memento_read to load it.`,
-          },
-        ],
-      };
-    }
-
-    ensureDir(ws);
-    ensureDir(path.join(ws, "memories"));
-
-    // Copy template
-    const templatePath = path.join(__dirname, "..", "templates", "working-memory.md");
-    const template = readFileSafe(templatePath);
-    if (!template) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Error: template not found at ${templatePath}`,
-          },
-        ],
+        content: [{ type: "text", text: `Error: ${result.error}` }],
         isError: true,
       };
     }
 
-    fs.writeFileSync(path.join(ws, "working-memory.md"), template, "utf-8");
-    writeSkipIndex(ws, []);
+    if (result.alreadyExists) {
+      const location = isHosted ? "(hosted)" : ws;
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Workspace already exists at ${location}. Use memento_read to load it.`,
+          },
+        ],
+      };
+    }
 
+    const location = isHosted ? "(hosted)" : ws;
     return {
       content: [
         {
           type: "text",
-          text: `Memento workspace initialized at ${ws}\n\nCreated:\n  working-memory.md\n  memories/\n  skip-index.json\n\nRead working-memory.md at the start of every session.`,
+          text: isHosted
+            ? `Memento workspace initialized at ${location}.\n\nRead working memory at the start of every session.`
+            : `Memento workspace initialized at ${location}\n\nCreated:\n  working-memory.md\n  memories/\n  skip-index.json\n\nRead working-memory.md at the start of every session.`,
         },
       ],
     };
@@ -224,9 +235,6 @@ server.tool(
 // Tool: memento_read
 // ---------------------------------------------------------------------------
 
-/**
- * Read the full working memory document, or a specific section.
- */
 server.tool(
   "memento_read",
   "Read working memory — the full document or a specific section",
@@ -240,42 +248,17 @@ server.tool(
     path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ section, path: customPath }) => {
-    const ws = customPath ? workspacePath(customPath) : detectWorkspace();
-    const wmPath = path.join(ws, "working-memory.md");
-    const content = readFileSafe(wmPath);
+    const ws = isHosted ? null : resolveWs(customPath);
+    const result = await storage.readWorkingMemory(ws, section);
 
-    if (!content) {
+    if (result.error) {
       return {
-        content: [
-          {
-            type: "text",
-            text: `No working memory found at ${wmPath}. Run memento_init first.`,
-          },
-        ],
+        content: [{ type: "text", text: result.error }],
         isError: true,
       };
     }
 
-    if (section) {
-      const heading = resolveSectionName(section);
-      const extracted = extractSection(content, heading);
-      if (extracted === null) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Section "${heading}" not found in working memory.`,
-            },
-          ],
-          isError: true,
-        };
-      }
-      return {
-        content: [{ type: "text", text: `## ${heading}\n\n${extracted}` }],
-      };
-    }
-
-    return { content: [{ type: "text", text: content }] };
+    return { content: [{ type: "text", text: result.content }] };
   }
 );
 
@@ -283,9 +266,6 @@ server.tool(
 // Tool: memento_update
 // ---------------------------------------------------------------------------
 
-/**
- * Update a specific section of working memory.
- */
 server.tool(
   "memento_update",
   "Update a section of working memory (active_work, standing_decisions, skip_list, activity_log, session_notes)",
@@ -299,31 +279,29 @@ server.tool(
     path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ section, content, path: customPath }) => {
-    const ws = customPath ? workspacePath(customPath) : detectWorkspace();
-    const wmPath = path.join(ws, "working-memory.md");
-    const existing = readFileSafe(wmPath);
+    const ws = isHosted ? null : resolveWs(customPath);
+    const result = await storage.updateWorkingMemory(ws, section, content);
 
-    if (!existing) {
+    // Passthrough for hosted adapter
+    if (result._raw) {
       return {
-        content: [
-          {
-            type: "text",
-            text: `No working memory found at ${wmPath}. Run memento_init first.`,
-          },
-        ],
-        isError: true,
+        content: [{ type: "text", text: result.text }],
+        ...(result.isError ? { isError: true } : {}),
       };
     }
 
-    const heading = resolveSectionName(section);
-    const updated = replaceSection(existing, heading, content);
-    fs.writeFileSync(wmPath, updated, "utf-8");
+    if (result.error) {
+      return {
+        content: [{ type: "text", text: result.error }],
+        isError: true,
+      };
+    }
 
     return {
       content: [
         {
           type: "text",
-          text: `Updated section "${heading}" in working memory.`,
+          text: `Updated section "${result.heading}" in working memory.`,
         },
       ],
     };
@@ -334,9 +312,6 @@ server.tool(
 // Tool: memento_store
 // ---------------------------------------------------------------------------
 
-/**
- * Store a discrete memory with metadata.
- */
 server.tool(
   "memento_store",
   "Store a discrete memory (fact, decision, observation, instruction) with tags and optional expiration",
@@ -351,42 +326,29 @@ server.tool(
     path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ content, tags, type, expires, path: customPath }) => {
-    const ws = customPath ? workspacePath(customPath) : detectWorkspace();
-    const memoriesDir = path.join(ws, "memories");
+    const ws = isHosted ? null : resolveWs(customPath);
+    const result = await storage.storeMemory(ws, { content, tags, type, expires });
 
-    if (!fs.existsSync(memoriesDir)) {
+    // Passthrough for hosted adapter
+    if (result._raw) {
       return {
-        content: [
-          {
-            type: "text",
-            text: `Memories directory not found. Run memento_init first.`,
-          },
-        ],
-        isError: true,
+        content: [{ type: "text", text: result.text }],
+        ...(result.isError ? { isError: true } : {}),
       };
     }
 
-    const id = randomUUID().slice(0, 8);
-    const memory = {
-      id,
-      content,
-      type: type || "observation",
-      tags: tags || [],
-      created: new Date().toISOString(),
-      expires: expires || null,
-    };
-
-    fs.writeFileSync(
-      path.join(memoriesDir, `${id}.json`),
-      JSON.stringify(memory, null, 2),
-      "utf-8"
-    );
+    if (result.error) {
+      return {
+        content: [{ type: "text", text: result.error }],
+        isError: true,
+      };
+    }
 
     return {
       content: [
         {
           type: "text",
-          text: `Stored memory ${id} (${memory.type})${memory.tags.length ? ` [${memory.tags.join(", ")}]` : ""}`,
+          text: `Stored memory ${result.id} (${result.type})${result.tags.length ? ` [${result.tags.join(", ")}]` : ""}`,
         },
       ],
     };
@@ -397,10 +359,6 @@ server.tool(
 // Tool: memento_recall
 // ---------------------------------------------------------------------------
 
-/**
- * Search stored memories by keyword and/or tag.
- * Simple keyword matching — no vectors, no relevance scoring.
- */
 server.tool(
   "memento_recall",
   "Search stored memories by keyword, tag, or type",
@@ -415,86 +373,35 @@ server.tool(
     path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ query, tags, type, limit, path: customPath }) => {
-    const ws = customPath ? workspacePath(customPath) : detectWorkspace();
-    const memoriesDir = path.join(ws, "memories");
+    const ws = isHosted ? null : resolveWs(customPath);
+    const result = await storage.recallMemories(ws, { query, tags, type, limit });
 
-    if (!fs.existsSync(memoriesDir)) {
+    // Passthrough for hosted adapter
+    if (result._raw) {
       return {
-        content: [
-          {
-            type: "text",
-            text: `No memories directory found. Run memento_init first.`,
-          },
-        ],
+        content: [{ type: "text", text: result.text }],
+        ...(result.isError ? { isError: true } : {}),
+      };
+    }
+
+    if (result.error) {
+      return {
+        content: [{ type: "text", text: result.error }],
         isError: true,
       };
     }
 
-    const files = fs.readdirSync(memoriesDir).filter((f) => f.endsWith(".json"));
-    const maxResults = limit || 10;
-    const now = new Date();
-    const queryLower = query.toLowerCase();
-    const queryTerms = queryLower.split(/\s+/);
-
-    const results = [];
-
-    for (const file of files) {
-      try {
-        const raw = fs.readFileSync(path.join(memoriesDir, file), "utf-8");
-        const memory = JSON.parse(raw);
-
-        // Skip expired
-        if (memory.expires && new Date(memory.expires) < now) continue;
-
-        // Filter by type
-        if (type && memory.type !== type) continue;
-
-        // Filter by tags (match any)
-        if (tags && tags.length > 0) {
-          const memTags = (memory.tags || []).map((mt) => mt.toLowerCase());
-          const hasTag = tags.some((t) => memTags.includes(t.toLowerCase()));
-          if (!hasTag) continue;
-        }
-
-        // Keyword match — count how many query terms appear in content
-        const contentLower = memory.content.toLowerCase();
-        const hits = queryTerms.filter((term) => contentLower.includes(term)).length;
-        if (hits === 0) continue;
-
-        results.push({ memory, score: hits / queryTerms.length });
-      } catch {
-        // Skip malformed files
-      }
-    }
-
-    // Sort by score descending, then by created descending
-    results.sort((a, b) => {
-      if (b.score !== a.score) return b.score - a.score;
-      return new Date(b.memory.created) - new Date(a.memory.created);
-    });
-
-    const topResults = results.slice(0, maxResults);
-
-    if (topResults.length === 0) {
+    if (result.results.length === 0) {
       return {
-        content: [{ type: "text", text: `No memories found matching "${query}".` }],
+        content: [{ type: "text", text: `No memories found matching "${result.query}".` }],
       };
     }
-
-    const formatted = topResults
-      .map((r) => {
-        const m = r.memory;
-        const tagStr = m.tags && m.tags.length ? ` [${m.tags.join(", ")}]` : "";
-        const expStr = m.expires ? ` (expires: ${m.expires})` : "";
-        return `**${m.id}** (${m.type})${tagStr}${expStr}\n${m.content}`;
-      })
-      .join("\n\n---\n\n");
 
     return {
       content: [
         {
           type: "text",
-          text: `Found ${topResults.length} memor${topResults.length === 1 ? "y" : "ies"}:\n\n${formatted}`,
+          text: `Found ${result.count} memor${result.count === 1 ? "y" : "ies"}:\n\n${result.formatted}`,
         },
       ],
     };
@@ -505,10 +412,6 @@ server.tool(
 // Tool: memento_skip_add
 // ---------------------------------------------------------------------------
 
-/**
- * Add an item to the skip list.
- * Skip list = anti-memory. Things the agent should NOT do right now.
- */
 server.tool(
   "memento_skip_add",
   "Add an item to the skip list — things to NOT do right now, with expiration",
@@ -519,48 +422,29 @@ server.tool(
     path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ item, reason, expires, path: customPath }) => {
-    const ws = customPath ? workspacePath(customPath) : detectWorkspace();
+    const ws = isHosted ? null : resolveWs(customPath);
+    const result = await storage.addSkip(ws, { item, reason, expires });
 
-    if (!fs.existsSync(ws)) {
+    // Passthrough for hosted adapter
+    if (result._raw) {
       return {
-        content: [
-          {
-            type: "text",
-            text: `Workspace not found at ${ws}. Run memento_init first.`,
-          },
-        ],
-        isError: true,
+        content: [{ type: "text", text: result.text }],
+        ...(result.isError ? { isError: true } : {}),
       };
     }
 
-    const entries = readSkipIndex(ws);
-    entries.push({
-      id: randomUUID().slice(0, 8),
-      item,
-      reason,
-      expires,
-      added: new Date().toISOString(),
-    });
-    writeSkipIndex(ws, entries);
-
-    // Also update the skip list section in working memory
-    const wmPath = path.join(ws, "working-memory.md");
-    const wm = readFileSafe(wmPath);
-    if (wm) {
-      const activeEntries = purgeExpiredSkips(entries);
-      const tableRows = activeEntries
-        .map((e) => `| ${e.item} | ${e.reason} | ${e.expires} |`)
-        .join("\n");
-      const tableContent = `| Skip | Reason | Expires |\n|------|--------|---------|${tableRows ? "\n" + tableRows : ""}`;
-      const updated = replaceSection(wm, "Skip List", tableContent);
-      fs.writeFileSync(wmPath, updated, "utf-8");
+    if (result.error) {
+      return {
+        content: [{ type: "text", text: result.error }],
+        isError: true,
+      };
     }
 
     return {
       content: [
         {
           type: "text",
-          text: `Added to skip list: "${item}" (expires ${expires})`,
+          text: `Added to skip list: "${result.item}" (expires ${result.expires})`,
         },
       ],
     };
@@ -571,9 +455,6 @@ server.tool(
 // Tool: memento_skip_check
 // ---------------------------------------------------------------------------
 
-/**
- * Check if something should be skipped. Auto-clears expired entries.
- */
 server.tool(
   "memento_skip_check",
   "Check if a topic/action is on the skip list. Auto-clears expired entries.",
@@ -582,39 +463,30 @@ server.tool(
     path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ query, path: customPath }) => {
-    const ws = customPath ? workspacePath(customPath) : detectWorkspace();
+    const ws = isHosted ? null : resolveWs(customPath);
+    const result = await storage.checkSkip(ws, query);
 
-    if (!fs.existsSync(ws)) {
+    // Passthrough for hosted adapter
+    if (result._raw) {
       return {
-        content: [
-          {
-            type: "text",
-            text: `Workspace not found at ${ws}. Run memento_init first.`,
-          },
-        ],
+        content: [{ type: "text", text: result.text }],
+        ...(result.isError ? { isError: true } : {}),
+      };
+    }
+
+    if (result.error) {
+      return {
+        content: [{ type: "text", text: result.error }],
         isError: true,
       };
     }
 
-    let entries = readSkipIndex(ws);
-    const before = entries.length;
-    entries = purgeExpiredSkips(entries);
-
-    // Write back if we purged anything
-    if (entries.length !== before) {
-      writeSkipIndex(ws, entries);
-    }
-
-    const match = entries.find(
-      (e) => matchesAllWords(query, e.item) || matchesAllWords(e.item, query)
-    );
-
-    if (match) {
+    if (result.match) {
       return {
         content: [
           {
             type: "text",
-            text: `SKIP: "${match.item}"\nReason: ${match.reason}\nExpires: ${match.expires}`,
+            text: `SKIP: "${result.match.item}"\nReason: ${result.match.reason}\nExpires: ${result.match.expires}`,
           },
         ],
       };
@@ -630,9 +502,6 @@ server.tool(
 // Tool: memento_health
 // ---------------------------------------------------------------------------
 
-/**
- * Report memory system health and stats.
- */
 server.tool(
   "memento_health",
   "Report memory system health — stats, staleness, expired entries",
@@ -640,104 +509,26 @@ server.tool(
     path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ path: customPath }) => {
-    const ws = customPath ? workspacePath(customPath) : detectWorkspace();
+    const ws = isHosted ? null : resolveWs(customPath);
+    const result = await storage.getHealth(ws);
 
-    if (!fs.existsSync(ws)) {
+    // Passthrough for hosted adapter
+    if (result._raw) {
       return {
-        content: [
-          {
-            type: "text",
-            text: `No workspace found at ${ws}. Run memento_init to create one.`,
-          },
-        ],
+        content: [{ type: "text", text: result.text }],
+        ...(result.isError ? { isError: true } : {}),
+      };
+    }
+
+    if (result.error) {
+      return {
+        content: [{ type: "text", text: result.error }],
         isError: true,
       };
     }
 
-    const stats = { workspace: ws };
-
-    // Working memory
-    const wmPath = path.join(ws, "working-memory.md");
-    if (fs.existsSync(wmPath)) {
-      const wmStat = fs.statSync(wmPath);
-      stats.workingMemory = {
-        lastModified: wmStat.mtime.toISOString(),
-        sizeBytes: wmStat.size,
-      };
-      const hoursSinceUpdate = (Date.now() - wmStat.mtime.getTime()) / (1000 * 60 * 60);
-      if (hoursSinceUpdate > 24) {
-        stats.workingMemory.stale = true;
-        stats.workingMemory.stalenessWarning = `Working memory hasn't been updated in ${Math.round(hoursSinceUpdate)} hours.`;
-      }
-    } else {
-      stats.workingMemory = { missing: true };
-    }
-
-    // Memories
-    const memoriesDir = path.join(ws, "memories");
-    if (fs.existsSync(memoriesDir)) {
-      const files = fs.readdirSync(memoriesDir).filter((f) => f.endsWith(".json"));
-      let expired = 0;
-      const now = new Date();
-      for (const file of files) {
-        try {
-          const raw = fs.readFileSync(path.join(memoriesDir, file), "utf-8");
-          const m = JSON.parse(raw);
-          if (m.expires && new Date(m.expires) < now) expired++;
-        } catch {
-          // skip
-        }
-      }
-      stats.memories = {
-        total: files.length,
-        expired,
-        active: files.length - expired,
-      };
-    } else {
-      stats.memories = { total: 0 };
-    }
-
-    // Skip list
-    const skipEntries = readSkipIndex(ws);
-    const activeSkips = purgeExpiredSkips(skipEntries);
-    stats.skipList = {
-      total: skipEntries.length,
-      active: activeSkips.length,
-      expired: skipEntries.length - activeSkips.length,
-    };
-
-    // Format output
-    const lines = [
-      `**Memento Health Report**`,
-      `Workspace: ${stats.workspace}`,
-      ``,
-      `**Working Memory**`,
-    ];
-
-    if (stats.workingMemory.missing) {
-      lines.push(`  Status: MISSING — run memento_init`);
-    } else {
-      lines.push(`  Last modified: ${stats.workingMemory.lastModified}`);
-      lines.push(`  Size: ${stats.workingMemory.sizeBytes} bytes`);
-      if (stats.workingMemory.stale) {
-        lines.push(`  ⚠ ${stats.workingMemory.stalenessWarning}`);
-      }
-    }
-
-    lines.push(``);
-    lines.push(`**Stored Memories**`);
-    lines.push(
-      `  Total: ${stats.memories.total} (${stats.memories.active || 0} active, ${stats.memories.expired || 0} expired)`
-    );
-
-    lines.push(``);
-    lines.push(`**Skip List**`);
-    lines.push(
-      `  Total: ${stats.skipList.total} (${stats.skipList.active} active, ${stats.skipList.expired} expired)`
-    );
-
     return {
-      content: [{ type: "text", text: lines.join("\n") }],
+      content: [{ type: "text", text: result.formatted }],
     };
   }
 );
@@ -777,4 +568,6 @@ export {
   resolveSectionName,
   server,
   main,
+  storage,
+  isHosted,
 };
