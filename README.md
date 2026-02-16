@@ -193,19 +193,267 @@ npm run format:check  # Check formatting with Prettier
 npm run test:smoke    # Quick smoke test of all tools
 ```
 
+## Architecture
+
+The Memento Protocol supports two modes:
+
+- **Local mode** (default) — File-based storage in `.memento/`. Zero dependencies beyond the MCP SDK. Everything documented above.
+- **Hosted mode** — SaaS API backend. Same MCP tools, same protocol. Adds relevance scoring with decay, automatic memory consolidation, identity crystallization, and multi-agent workspace isolation. Switch backends with an env var.
+
+The MCP server detects which mode to use automatically: if `MEMENTO_API_KEY` and `MEMENTO_API_URL` are set, it uses the hosted backend. Otherwise, it falls back to local file storage.
+
+## Hosted Mode
+
+### Setup
+
+Set three environment variables:
+
+| Variable            | Description                                                        |
+| ------------------- | ------------------------------------------------------------------ |
+| `MEMENTO_API_KEY`   | API key (starts with `mp_live_`)                                   |
+| `MEMENTO_API_URL`   | API base URL (e.g. `https://memento-saas.your-domain.workers.dev`) |
+| `MEMENTO_WORKSPACE` | Workspace name (default: `default`)                                |
+
+### MCP Configuration
+
+Add to your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "memento": {
+      "command": "node",
+      "args": ["/path/to/memento-protocol/src/index.js"],
+      "env": {
+        "MEMENTO_API_KEY": "mp_live_your_key_here",
+        "MEMENTO_API_URL": "https://memento-saas.your-domain.workers.dev",
+        "MEMENTO_WORKSPACE": "my-project"
+      }
+    }
+  }
+}
+```
+
+The MCP tools (`memento_init`, `memento_read`, etc.) work identically in both modes. The agent doesn't need to know which backend is active.
+
+## SaaS API Reference
+
+All endpoints are under `/v1/`. Responses use MCP tool output format:
+
+```json
+{ "content": [{ "type": "text", "text": "..." }] }
+```
+
+### Authentication
+
+Every `/v1/` request requires:
+
+```
+Authorization: Bearer mp_live_your_key_here
+```
+
+### Workspace Header
+
+Most endpoints scope data by workspace:
+
+```
+X-Memento-Workspace: my-project
+```
+
+Defaults to `"default"` if omitted. Workspaces are auto-created on first request.
+
+### Workspaces
+
+**Create a workspace**
+
+```bash
+curl -X POST https://API_URL/v1/workspaces \
+  -H "Authorization: Bearer $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "my-project"}'
+```
+
+**List workspaces**
+
+```bash
+curl https://API_URL/v1/workspaces -H "Authorization: Bearer $KEY"
+```
+
+**Delete a workspace**
+
+```bash
+curl -X DELETE https://API_URL/v1/workspaces/WORKSPACE_ID -H "Authorization: Bearer $KEY"
+```
+
+### Memories
+
+**Store a memory**
+
+```bash
+curl -X POST https://API_URL/v1/memories \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Memento-Workspace: my-project" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "API moved to /v2/status", "type": "instruction", "tags": ["api", "migration"]}'
+```
+
+Body fields:
+
+| Field     | Type     | Default       | Description                                      |
+| --------- | -------- | ------------- | ------------------------------------------------ |
+| `content` | string   | (required)    | The memory content                               |
+| `type`    | string   | `observation` | `fact`, `decision`, `observation`, `instruction` |
+| `tags`    | string[] | `[]`          | Tags for categorization                          |
+| `expires` | string   | (none)        | ISO date when this memory expires                |
+
+**Recall memories**
+
+```bash
+curl "https://API_URL/v1/memories/recall?query=api+migration&tags=api&type=instruction&limit=5" \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Memento-Workspace: my-project"
+```
+
+Query parameters:
+
+| Param   | Type   | Default    | Description                                   |
+| ------- | ------ | ---------- | --------------------------------------------- |
+| `query` | string | (required) | Search terms matched against content and tags |
+| `tags`  | string | (none)     | Comma-separated tag filter (matches any)      |
+| `type`  | string | (none)     | Filter by memory type                         |
+| `limit` | number | `10`       | Max results (1–100)                           |
+
+Results are ranked by relevance score with access-tracked decay.
+
+**Delete a memory**
+
+```bash
+curl -X DELETE https://API_URL/v1/memories/MEMORY_ID \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Memento-Workspace: my-project"
+```
+
+### Working Memory
+
+**Read all sections**
+
+```bash
+curl https://API_URL/v1/working-memory \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Memento-Workspace: my-project"
+```
+
+Returns the full working memory as a markdown document.
+
+**Read a specific section**
+
+```bash
+curl https://API_URL/v1/working-memory/active_work \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Memento-Workspace: my-project"
+```
+
+Valid sections: `active_work`, `standing_decisions`, `skip_list`, `activity_log`, `session_notes`.
+
+**Update a section**
+
+```bash
+curl -X PUT https://API_URL/v1/working-memory/active_work \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Memento-Workspace: my-project" \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Refactoring auth module — halfway done, tests passing"}'
+```
+
+### Skip List
+
+**Add a skip entry**
+
+```bash
+curl -X POST https://API_URL/v1/skip-list \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Memento-Workspace: my-project" \
+  -H "Content-Type: application/json" \
+  -d '{"item": "aurora alerts", "reason": "Kp too low", "expires": "2026-02-20"}'
+```
+
+All three fields (`item`, `reason`, `expires`) are required.
+
+**Check the skip list**
+
+```bash
+curl "https://API_URL/v1/skip-list/check?query=aurora" \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Memento-Workspace: my-project"
+```
+
+Auto-purges expired entries before checking. Returns match details or "Not on skip list."
+
+**Remove a skip entry**
+
+```bash
+curl -X DELETE https://API_URL/v1/skip-list/SKIP_ID \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Memento-Workspace: my-project"
+```
+
+### Consolidation
+
+**Trigger consolidation**
+
+```bash
+curl -X POST https://API_URL/v1/consolidate \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Memento-Workspace: my-project"
+```
+
+Groups memories that share tags (3+ per group), marks originals as consolidated, and creates summary memories. No request body needed.
+
+### Identity
+
+**Crystallize identity**
+
+```bash
+curl -X POST https://API_URL/v1/identity/crystallize \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Memento-Workspace: my-project"
+```
+
+Synthesizes an identity crystal from stored memories — a snapshot of the agent's accumulated knowledge and patterns. No request body needed.
+
+**Get the latest identity crystal**
+
+```bash
+curl https://API_URL/v1/identity \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Memento-Workspace: my-project"
+```
+
+### Health
+
+**Get workspace health report**
+
+```bash
+curl https://API_URL/v1/health \
+  -H "Authorization: Bearer $KEY" \
+  -H "X-Memento-Workspace: my-project"
+```
+
+Returns working memory stats, memory counts (active/expired/consolidated), skip list stats, and access log totals.
+
 ## What This Is Not
 
-This reference server is deliberately simple. It provides the protocol — the structure and tools for agent memory — without the sophistication of a full memory system.
+The local reference server is deliberately simple. It provides the protocol — the structure and tools for agent memory — without the sophistication of a full memory system. In local mode, recall uses keyword matching, there's no scoring or decay, and workspaces are single-agent.
 
-What's missing (by design):
+The **hosted mode** adds what the reference implementation leaves out:
 
-- **Vector search** — recall uses keyword matching, not semantic similarity
-- **Relevance scoring** — no embedding-based ranking
-- **Memory consolidation** — no automatic summarization of old memories
-- **Identity crystallization** — no synthesis of agent personality over time
-- **Multi-agent support** — single workspace, single agent
+- **Relevance scoring** — keyword + recency + access-tracked decay
+- **Memory consolidation** — automatic grouping and summarization of related memories
+- **Identity crystallization** — synthesis of agent personality from accumulated memories
+- **Multi-agent workspaces** — isolated workspaces per project, per agent, per team
+- **Full REST API** — every operation available as an HTTP endpoint
 
-These are hard problems that require infrastructure beyond a local file server. The reference implementation proves the protocol works. A production memory system builds on it.
+The local mode proves the protocol works. The hosted mode makes it production-ready.
 
 ## License
 
