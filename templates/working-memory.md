@@ -17,7 +17,7 @@ Each entry: what you're doing, where you left off, next action.
 Decisions you've made. Don't re-decide — follow them.
 
 | Decision | Rationale | Date |
-|----------|-----------|------|
+| -------- | --------- | ---- |
 
 ---
 
@@ -26,7 +26,7 @@ Decisions you've made. Don't re-decide — follow them.
 Things to NOT do right now, with expiration.
 
 | Skip | Reason | Expires |
-|------|--------|---------|
+| ---- | ------ | ------- |
 
 ---
 
@@ -35,7 +35,7 @@ Things to NOT do right now, with expiration.
 What you did recently, so you don't repeat.
 
 | Activity | When | Result | Next |
-|----------|------|--------|------|
+| -------- | ---- | ------ | ---- |
 
 ---
 

@@ -34,12 +34,13 @@ function workspacePath(customPath) {
   return path.resolve(customPath || path.join(process.cwd(), ".memento"));
 }
 
-/** Read a file, return null if missing. */
+/** Read a file, return null if missing. Throws on non-ENOENT errors. */
 function readFileSafe(filePath) {
   try {
     return fs.readFileSync(filePath, "utf-8");
-  } catch {
-    return null;
+  } catch (err) {
+    if (err.code === "ENOENT") return null;
+    throw err;
   }
 }
 
@@ -61,11 +62,7 @@ function readSkipIndex(ws) {
 
 /** Write the skip index. */
 function writeSkipIndex(ws, entries) {
-  fs.writeFileSync(
-    path.join(ws, "skip-index.json"),
-    JSON.stringify(entries, null, 2),
-    "utf-8"
-  );
+  fs.writeFileSync(path.join(ws, "skip-index.json"), JSON.stringify(entries, null, 2), "utf-8");
 }
 
 /** Purge expired skip entries. Returns cleaned list. */
@@ -81,7 +78,7 @@ function purgeExpiredSkips(entries) {
  */
 function extractSection(markdown, sectionName) {
   const pattern = new RegExp(
-    `^## ${escapeRegex(sectionName)}\\s*\\n([\\s\\S]*?)(?=\\n---\\s*\\n|\\n## |$)`,
+    `^## ${escapeRegex(sectionName)}\\s*\\n([\\s\\S]*?)(?=\\n---\\s*\\n|\\n## |(?![\\s\\S]))`,
     "m"
   );
   const match = markdown.match(pattern);
@@ -93,7 +90,7 @@ function extractSection(markdown, sectionName) {
  */
 function replaceSection(markdown, sectionName, newContent) {
   const pattern = new RegExp(
-    `(^## ${escapeRegex(sectionName)}\\s*\\n)([\\s\\S]*?)(?=\\n---\\s*\\n|\\n## |$)`,
+    `(^## ${escapeRegex(sectionName)}\\s*\\n)([\\s\\S]*?)(?=\\n---\\s*\\n|\\n## |(?![\\s\\S]))`,
     "m"
   );
   const match = markdown.match(pattern);
@@ -164,10 +161,7 @@ server.tool(
   "memento_init",
   "Initialize a new Memento workspace with working memory template and storage directories",
   {
-    path: z
-      .string()
-      .optional()
-      .describe("Workspace path (default: .memento/ in cwd)"),
+    path: z.string().optional().describe("Workspace path (default: .memento/ in cwd)"),
   },
   async ({ path: customPath }) => {
     const ws = workspacePath(customPath);
@@ -232,10 +226,7 @@ server.tool(
       .describe(
         "Section to read: active_work, standing_decisions, skip_list, activity_log, session_notes"
       ),
-    path: z
-      .string()
-      .optional()
-      .describe("Workspace path (auto-detected if omitted)"),
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ section, path: customPath }) => {
     const ws = customPath ? workspacePath(customPath) : detectWorkspace();
@@ -294,10 +285,7 @@ server.tool(
         "Section to update: active_work, standing_decisions, skip_list, activity_log, session_notes"
       ),
     content: z.string().describe("New content for the section"),
-    path: z
-      .string()
-      .optional()
-      .describe("Workspace path (auto-detected if omitted)"),
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ section, content, path: customPath }) => {
     const ws = customPath ? workspacePath(customPath) : detectWorkspace();
@@ -343,22 +331,13 @@ server.tool(
   "Store a discrete memory (fact, decision, observation, instruction) with tags and optional expiration",
   {
     content: z.string().describe("The memory content"),
-    tags: z
-      .array(z.string())
-      .optional()
-      .describe("Tags for categorization"),
+    tags: z.array(z.string()).optional().describe("Tags for categorization"),
     type: z
       .enum(["fact", "decision", "observation", "instruction"])
       .optional()
       .describe("Memory type (default: observation)"),
-    expires: z
-      .string()
-      .optional()
-      .describe("ISO date string when this memory expires"),
-    path: z
-      .string()
-      .optional()
-      .describe("Workspace path (auto-detected if omitted)"),
+    expires: z.string().optional().describe("ISO date string when this memory expires"),
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ content, tags, type, expires, path: customPath }) => {
     const ws = customPath ? workspacePath(customPath) : detectWorkspace();
@@ -416,22 +395,13 @@ server.tool(
   "Search stored memories by keyword, tag, or type",
   {
     query: z.string().describe("Search query (matched against memory content)"),
-    tags: z
-      .array(z.string())
-      .optional()
-      .describe("Filter by tags (matches any)"),
+    tags: z.array(z.string()).optional().describe("Filter by tags (matches any)"),
     type: z
       .string()
       .optional()
       .describe("Filter by type: fact, decision, observation, instruction"),
-    limit: z
-      .number()
-      .optional()
-      .describe("Max results (default: 10)"),
-    path: z
-      .string()
-      .optional()
-      .describe("Workspace path (auto-detected if omitted)"),
+    limit: z.number().optional().describe("Max results (default: 10)"),
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ query, tags, type, limit, path: customPath }) => {
     const ws = customPath ? workspacePath(customPath) : detectWorkspace();
@@ -470,9 +440,8 @@ server.tool(
 
         // Filter by tags (match any)
         if (tags && tags.length > 0) {
-          const hasTag = tags.some((t) =>
-            memory.tags.map((mt) => mt.toLowerCase()).includes(t.toLowerCase())
-          );
+          const memTags = (memory.tags || []).map((mt) => mt.toLowerCase());
+          const hasTag = tags.some((t) => memTags.includes(t.toLowerCase()));
           if (!hasTag) continue;
         }
 
@@ -497,16 +466,14 @@ server.tool(
 
     if (topResults.length === 0) {
       return {
-        content: [
-          { type: "text", text: `No memories found matching "${query}".` },
-        ],
+        content: [{ type: "text", text: `No memories found matching "${query}".` }],
       };
     }
 
     const formatted = topResults
       .map((r) => {
         const m = r.memory;
-        const tagStr = m.tags.length ? ` [${m.tags.join(", ")}]` : "";
+        const tagStr = m.tags && m.tags.length ? ` [${m.tags.join(", ")}]` : "";
         const expStr = m.expires ? ` (expires: ${m.expires})` : "";
         return `**${m.id}** (${m.type})${tagStr}${expStr}\n${m.content}`;
       })
@@ -537,13 +504,8 @@ server.tool(
   {
     item: z.string().describe("What to skip"),
     reason: z.string().describe("Why it should be skipped"),
-    expires: z
-      .string()
-      .describe("When this skip expires (ISO date or natural like '2026-02-20')"),
-    path: z
-      .string()
-      .optional()
-      .describe("Workspace path (auto-detected if omitted)"),
+    expires: z.string().describe("When this skip expires (ISO date string, e.g. '2026-02-20')"),
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ item, reason, expires, path: customPath }) => {
     const ws = customPath ? workspacePath(customPath) : detectWorkspace();
@@ -606,10 +568,7 @@ server.tool(
   "Check if a topic/action is on the skip list. Auto-clears expired entries.",
   {
     query: z.string().describe("What to check against the skip list"),
-    path: z
-      .string()
-      .optional()
-      .describe("Workspace path (auto-detected if omitted)"),
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ query, path: customPath }) => {
     const ws = customPath ? workspacePath(customPath) : detectWorkspace();
@@ -637,9 +596,7 @@ server.tool(
 
     const queryLower = query.toLowerCase();
     const match = entries.find(
-      (e) =>
-        e.item.toLowerCase().includes(queryLower) ||
-        queryLower.includes(e.item.toLowerCase())
+      (e) => e.item.toLowerCase().includes(queryLower) || queryLower.includes(e.item.toLowerCase())
     );
 
     if (match) {
@@ -654,9 +611,7 @@ server.tool(
     }
 
     return {
-      content: [
-        { type: "text", text: `Not on skip list. Proceed with "${query}".` },
-      ],
+      content: [{ type: "text", text: `Not on skip list. Proceed with "${query}".` }],
     };
   }
 );
@@ -672,10 +627,7 @@ server.tool(
   "memento_health",
   "Report memory system health — stats, staleness, expired entries",
   {
-    path: z
-      .string()
-      .optional()
-      .describe("Workspace path (auto-detected if omitted)"),
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
   async ({ path: customPath }) => {
     const ws = customPath ? workspacePath(customPath) : detectWorkspace();
@@ -702,8 +654,7 @@ server.tool(
         lastModified: wmStat.mtime.toISOString(),
         sizeBytes: wmStat.size,
       };
-      const hoursSinceUpdate =
-        (Date.now() - wmStat.mtime.getTime()) / (1000 * 60 * 60);
+      const hoursSinceUpdate = (Date.now() - wmStat.mtime.getTime()) / (1000 * 60 * 60);
       if (hoursSinceUpdate > 24) {
         stats.workingMemory.stale = true;
         stats.workingMemory.stalenessWarning = `Working memory hasn't been updated in ${Math.round(hoursSinceUpdate)} hours.`;
@@ -790,7 +741,29 @@ async function main() {
   await server.connect(transport);
 }
 
-main().catch((err) => {
-  console.error("Memento server failed to start:", err);
-  process.exit(1);
-});
+// Start the server when run directly (not when imported for testing)
+const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === __filename;
+if (isMainModule) {
+  main().catch((err) => {
+    console.error("Memento server failed to start:", err);
+    process.exit(1);
+  });
+}
+
+// Exported for testing
+export {
+  workspacePath,
+  readFileSafe,
+  ensureDir,
+  readSkipIndex,
+  writeSkipIndex,
+  purgeExpiredSkips,
+  extractSection,
+  replaceSection,
+  escapeRegex,
+  detectWorkspace,
+  SECTION_MAP,
+  resolveSectionName,
+  server,
+  main,
+};

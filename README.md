@@ -12,7 +12,7 @@ This is a reference MCP server implementation. File-based, zero cloud dependenci
 
 The most common mistake in agent memory is treating it like a log. "Checked the API — got a 404" tells future-you nothing useful. "API endpoint moved to /v2/status — update all calls" tells future-you exactly what to do.
 
-Every memory entry should pass the test: *Could a version of me with zero context read this and know what to do?*
+Every memory entry should pass the test: _Could a version of me with zero context read this and know what to do?_
 
 ### The Skip List
 
@@ -81,80 +81,80 @@ That's it. The agent reads working memory at session start, updates it as it wor
 
 Initialize a new workspace. Creates `.memento/` with a working memory template, memories directory, and skip list index.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `path` | string | `.memento/` in cwd | Workspace location |
+| Parameter | Type   | Default            | Description        |
+| --------- | ------ | ------------------ | ------------------ |
+| `path`    | string | `.memento/` in cwd | Workspace location |
 
 ### `memento_read`
 
 Read working memory — the full document or a specific section.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `section` | string | (all) | `active_work`, `standing_decisions`, `skip_list`, `activity_log`, `session_notes` |
-| `path` | string | auto-detect | Workspace location |
+| Parameter | Type   | Default     | Description                                                                       |
+| --------- | ------ | ----------- | --------------------------------------------------------------------------------- |
+| `section` | string | (all)       | `active_work`, `standing_decisions`, `skip_list`, `activity_log`, `session_notes` |
+| `path`    | string | auto-detect | Workspace location                                                                |
 
 ### `memento_update`
 
 Update a section of working memory with new content.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `section` | string | yes | Section key (see above) |
-| `content` | string | yes | New content for the section |
-| `path` | string | no | Workspace location |
+| Parameter | Type   | Required | Description                 |
+| --------- | ------ | -------- | --------------------------- |
+| `section` | string | yes      | Section key (see above)     |
+| `content` | string | yes      | New content for the section |
+| `path`    | string | no       | Workspace location          |
 
 ### `memento_store`
 
 Store a discrete memory with metadata.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `content` | string | (required) | The memory content |
-| `tags` | string[] | `[]` | Tags for categorization |
-| `type` | string | `observation` | `fact`, `decision`, `observation`, `instruction` |
-| `expires` | string | (none) | ISO date when this memory expires |
-| `path` | string | auto-detect | Workspace location |
+| Parameter | Type     | Default       | Description                                      |
+| --------- | -------- | ------------- | ------------------------------------------------ |
+| `content` | string   | (required)    | The memory content                               |
+| `tags`    | string[] | `[]`          | Tags for categorization                          |
+| `type`    | string   | `observation` | `fact`, `decision`, `observation`, `instruction` |
+| `expires` | string   | (none)        | ISO date when this memory expires                |
+| `path`    | string   | auto-detect   | Workspace location                               |
 
 ### `memento_recall`
 
 Search stored memories by keyword, tag, or type.
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `query` | string | (required) | Search terms matched against content |
-| `tags` | string[] | (none) | Filter by tags (matches any) |
-| `type` | string | (none) | Filter by memory type |
-| `limit` | number | `10` | Max results |
-| `path` | string | auto-detect | Workspace location |
+| Parameter | Type     | Default     | Description                          |
+| --------- | -------- | ----------- | ------------------------------------ |
+| `query`   | string   | (required)  | Search terms matched against content |
+| `tags`    | string[] | (none)      | Filter by tags (matches any)         |
+| `type`    | string   | (none)      | Filter by memory type                |
+| `limit`   | number   | `10`        | Max results                          |
+| `path`    | string   | auto-detect | Workspace location                   |
 
 ### `memento_skip_add`
 
 Add an item to the skip list. Also updates the Skip List section in working memory.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `item` | string | yes | What to skip |
-| `reason` | string | yes | Why |
-| `expires` | string | yes | When this skip expires |
-| `path` | string | no | Workspace location |
+| Parameter | Type   | Required | Description            |
+| --------- | ------ | -------- | ---------------------- |
+| `item`    | string | yes      | What to skip           |
+| `reason`  | string | yes      | Why                    |
+| `expires` | string | yes      | When this skip expires |
+| `path`    | string | no       | Workspace location     |
 
 ### `memento_skip_check`
 
 Check if something is on the skip list. Auto-purges expired entries.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `query` | string | yes | What to check |
-| `path` | string | no | Workspace location |
+| Parameter | Type   | Required | Description        |
+| --------- | ------ | -------- | ------------------ |
+| `query`   | string | yes      | What to check      |
+| `path`    | string | no       | Workspace location |
 
 ### `memento_health`
 
 Report memory system health — total memories, staleness warnings, expired entry counts.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `path` | string | no | Workspace location |
+| Parameter | Type   | Required | Description        |
+| --------- | ------ | -------- | ------------------ |
+| `path`    | string | no       | Workspace location |
 
 ## Storage Layout
 
@@ -182,6 +182,15 @@ Or ignore the whole thing if memory is per-machine:
 
 ```gitignore
 .memento/
+```
+
+## Development
+
+```bash
+npm test              # Run unit + integration tests
+npm run lint          # Lint with ESLint
+npm run format:check  # Check formatting with Prettier
+npm run test:smoke    # Quick smoke test of all tools
 ```
 
 ## What This Is Not
