@@ -36,6 +36,9 @@ async function seedWorkingMemory(db) {
   }
 }
 
+/** Track which workspace IDs have had schema applied this worker lifecycle. */
+const migratedWorkspaces = new Set();
+
 /**
  * Hono middleware that resolves the workspace for the current request.
  */
@@ -85,6 +88,12 @@ export function workspaceMiddleware() {
 
     // Get workspace DB client (uses Turso URL if available, falls back to dev DB)
     const wsDb = getWorkspaceDb(dbUrl, dbToken);
+
+    // Ensure workspace schema is up to date (once per worker lifecycle per workspace)
+    if (!migratedWorkspaces.has(workspaceId)) {
+      await initSchema(wsDb, "workspace");
+      migratedWorkspaces.add(workspaceId);
+    }
 
     c.set("workspaceId", workspaceId);
     c.set("workspaceName", workspaceName);

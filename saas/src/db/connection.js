@@ -158,6 +158,20 @@ CREATE TABLE IF NOT EXISTS identity_snapshots (
   source_count INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS working_memory_items (
+  id TEXT PRIMARY KEY,
+  category TEXT NOT NULL,
+  title TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'active',
+  priority INTEGER DEFAULT 0,
+  tags TEXT DEFAULT '[]',
+  next_action TEXT,
+  last_touched TEXT DEFAULT (datetime('now')),
+  created_at TEXT DEFAULT (datetime('now')),
+  updated_at TEXT DEFAULT (datetime('now'))
+);
 `;
 
 /**

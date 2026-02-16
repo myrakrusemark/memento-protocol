@@ -19,6 +19,16 @@ const SECTION_MAP = {
   session_notes: "Session Notes",
 };
 
+/** Map item categories to section headings for rendering items as markdown. */
+const CATEGORY_HEADING_MAP = {
+  active_work: "Active Work",
+  standing_decision: "Standing Decisions",
+  skip: "Skip List",
+  waiting_for: "Waiting For",
+  session_note: "Session Notes",
+  activity_log: "Activity Log",
+};
+
 function resolveSectionKey(param) {
   // If the param is already a known key, use it directly
   if (SECTION_MAP[param]) return param;
@@ -30,10 +40,81 @@ function resolveSectionKey(param) {
   return param;
 }
 
+function safeParseTags(tagsStr) {
+  try {
+    return JSON.parse(tagsStr || "[]");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Render working memory items as markdown, grouped by category.
+ */
+function renderItemsAsMarkdown(items) {
+  const grouped = {};
+  for (const item of items) {
+    const heading = CATEGORY_HEADING_MAP[item.category] || item.category;
+    if (!grouped[heading]) grouped[heading] = [];
+    grouped[heading].push(item);
+  }
+
+  const sections = [];
+  // Render in a stable order
+  const order = ["Active Work", "Standing Decisions", "Skip List", "Waiting For", "Activity Log", "Session Notes"];
+  const seen = new Set();
+
+  for (const heading of order) {
+    if (grouped[heading]) {
+      sections.push(renderSection(heading, grouped[heading]));
+      seen.add(heading);
+    }
+  }
+  // Any extra categories not in the predefined order
+  for (const [heading, items] of Object.entries(grouped)) {
+    if (!seen.has(heading)) {
+      sections.push(renderSection(heading, items));
+    }
+  }
+
+  if (sections.length === 0) {
+    return "# Working Memory\n\n(empty)";
+  }
+
+  return `# Working Memory\n\n---\n\n${sections.join("\n\n---\n\n")}`;
+}
+
+function renderSection(heading, items) {
+  const lines = [`## ${heading}\n`];
+  for (const item of items) {
+    const tags = safeParseTags(item.tags);
+    const tagStr = tags.length ? ` [${tags.join(", ")}]` : "";
+    const statusStr = item.status !== "active" ? ` *(${item.status})*` : "";
+    lines.push(`### ${item.title}${statusStr}${tagStr}\n`);
+    if (item.content) lines.push(item.content);
+    if (item.next_action) lines.push(`\n**Next:** ${item.next_action}`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
 // GET /v1/working-memory — Full working memory as markdown
 workingMemory.get("/", async (c) => {
   const db = c.get("workspaceDb");
 
+  // Try items table first
+  const itemsResult = await db.execute(
+    "SELECT * FROM working_memory_items WHERE status != 'archived' ORDER BY priority DESC, created_at DESC"
+  );
+
+  if (itemsResult.rows.length > 0) {
+    const markdown = renderItemsAsMarkdown(itemsResult.rows);
+    return c.json({
+      content: [{ type: "text", text: markdown }],
+    });
+  }
+
+  // Fallback to legacy sections table
   const result = await db.execute(
     "SELECT section_key, heading, content FROM working_memory_sections ORDER BY rowid"
   );

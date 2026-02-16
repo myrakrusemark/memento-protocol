@@ -45,6 +45,30 @@ export class HostedStorageAdapter extends StorageInterface {
     return { text, status: res.status, isError: res.status >= 400 };
   }
 
+  /**
+   * Make an authenticated API call that returns raw JSON (not MCP envelope).
+   * Used for new structured endpoints (items, context, memories list).
+   */
+  async _fetchJson(method, path, body) {
+    const url = `${this.apiUrl}${path}`;
+    const headers = {
+      Authorization: `Bearer ${this.apiKey}`,
+      "X-Memento-Workspace": this.workspace,
+      "Content-Type": "application/json",
+    };
+    const opts = { method, headers };
+    if (body) opts.body = JSON.stringify(body);
+
+    const res = await fetch(url, opts);
+    const json = await res.json();
+
+    if (res.status >= 400) {
+      return { error: json.error || JSON.stringify(json) };
+    }
+
+    return json;
+  }
+
   async initWorkspace(_wsPath) {
     const { text, isError } = await this._fetch("POST", "/v1/workspaces", {
       name: this.workspace,
@@ -124,5 +148,41 @@ export class HostedStorageAdapter extends StorageInterface {
     const { text, isError } = await this._fetch("GET", "/v1/health");
     if (isError) return { error: text };
     return { _raw: true, text, isError: false };
+  }
+
+  async createItem(_wsPath, data) {
+    const res = await this._fetchJson("POST", "/v1/working-memory/items", data);
+    if (res.error) return { error: res.error };
+    return res;
+  }
+
+  async updateItem(_wsPath, id, data) {
+    const res = await this._fetchJson("PUT", `/v1/working-memory/items/${id}`, data);
+    if (res.error) return { error: res.error };
+    return res;
+  }
+
+  async deleteItem(_wsPath, id) {
+    const res = await this._fetchJson("DELETE", `/v1/working-memory/items/${id}`);
+    if (res.error) return { error: res.error };
+    return res;
+  }
+
+  async listItems(_wsPath, filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.category) params.set("category", filters.category);
+    if (filters.status) params.set("status", filters.status);
+    if (filters.query) params.set("q", filters.query);
+    const qs = params.toString();
+    const path = `/v1/working-memory/items${qs ? `?${qs}` : ""}`;
+    const res = await this._fetchJson("GET", path);
+    if (res.error) return { error: res.error };
+    return res;
+  }
+
+  async getContext(_wsPath, message) {
+    const res = await this._fetchJson("POST", "/v1/context", { message });
+    if (res.error) return { error: res.error };
+    return res;
   }
 }

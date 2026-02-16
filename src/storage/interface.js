@@ -87,4 +87,55 @@ export class StorageInterface {
   async getHealth(wsPath) {
     throw new Error("Not implemented");
   }
+
+  /**
+   * Create a working memory item.
+   * @param {string} wsPath - Resolved workspace path
+   * @param {{ category: string, title: string, content?: string, status?: string, priority?: number, tags?: string[], next_action?: string }} data
+   * @returns {Promise<object>}
+   */
+  async createItem(wsPath, data) {
+    throw new Error("Not implemented");
+  }
+
+  /**
+   * Update a working memory item (partial).
+   * @param {string} wsPath - Resolved workspace path
+   * @param {string} id - Item ID
+   * @param {object} data - Fields to update
+   * @returns {Promise<object>}
+   */
+  async updateItem(wsPath, id, data) {
+    throw new Error("Not implemented");
+  }
+
+  /**
+   * Delete a working memory item.
+   * @param {string} wsPath - Resolved workspace path
+   * @param {string} id - Item ID
+   * @returns {Promise<{ deleted?: boolean, error?: string }>}
+   */
+  async deleteItem(wsPath, id) {
+    throw new Error("Not implemented");
+  }
+
+  /**
+   * List working memory items with optional filters.
+   * @param {string} wsPath - Resolved workspace path
+   * @param {{ category?: string, status?: string, query?: string }} filters
+   * @returns {Promise<{ items?: object[], total?: number, error?: string }>}
+   */
+  async listItems(wsPath, filters) {
+    throw new Error("Not implemented");
+  }
+
+  /**
+   * Get context — everything relevant for a message in one call.
+   * @param {string} wsPath - Resolved workspace path
+   * @param {string} message - The user's message
+   * @returns {Promise<object>}
+   */
+  async getContext(wsPath, message) {
+    throw new Error("Not implemented");
+  }
 }

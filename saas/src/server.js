@@ -10,19 +10,32 @@
  */
 
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { getControlDb, initSchema } from "./db/connection.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { workspaceMiddleware } from "./middleware/workspace.js";
 import workspaces from "./routes/workspaces.js";
 import memories from "./routes/memories.js";
 import workingMemory from "./routes/working-memory.js";
+import workingMemoryItems from "./routes/working-memory-items.js";
 import skipList from "./routes/skip-list.js";
 import consolidation from "./routes/consolidation.js";
 import identity from "./routes/identity.js";
+import context from "./routes/context.js";
 import health from "./routes/health.js";
 
 export function createApp() {
   const app = new Hono();
+
+  // CORS — allow dashboard at hifathom.com
+  app.use(
+    "*",
+    cors({
+      origin: ["https://hifathom.com", "https://fathoms-log.pages.dev", "http://localhost:4321", "http://localhost:4242"],
+      allowHeaders: ["Content-Type", "Authorization", "X-Memento-Workspace"],
+      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    })
+  );
 
   // Health check (unauthenticated)
   app.get("/", (c) => {
@@ -39,9 +52,11 @@ export function createApp() {
   // Mount route groups
   v1.route("/workspaces", workspaces);
   v1.route("/memories", memories);
+  v1.route("/working-memory/items", workingMemoryItems);
   v1.route("/working-memory", workingMemory);
   v1.route("/skip-list", skipList);
   v1.route("/consolidate", consolidation);
+  v1.route("/context", context);
   v1.route("/identity", identity);
   v1.route("/health", health);
 

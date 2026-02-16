@@ -534,6 +534,186 @@ server.tool(
 );
 
 // ---------------------------------------------------------------------------
+// Tool: memento_item_create
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "memento_item_create",
+  "Create a structured working memory item (active_work, standing_decision, skip, waiting_for, session_note, activity_log)",
+  {
+    category: z
+      .enum(["active_work", "standing_decision", "skip", "waiting_for", "session_note", "activity_log"])
+      .describe("Item category"),
+    title: z.string().describe("Item title"),
+    content: z.string().optional().describe("Item content/details"),
+    status: z
+      .enum(["active", "paused", "completed", "archived"])
+      .optional()
+      .describe("Item status (default: active)"),
+    priority: z.number().optional().describe("Priority (higher = more important, default: 0)"),
+    tags: z.array(z.string()).optional().describe("Tags for categorization"),
+    next_action: z.string().optional().describe("Next action to take"),
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
+  },
+  async ({ category, title, content, status, priority, tags, next_action, path: customPath }) => {
+    const ws = isHosted ? null : resolveWs(customPath);
+    const result = await storage.createItem(ws, {
+      category,
+      title,
+      content,
+      status,
+      priority,
+      tags,
+      next_action,
+    });
+
+    if (result.error) {
+      return { content: [{ type: "text", text: result.error }], isError: true };
+    }
+
+    const tagStr = result.tags?.length ? ` [${result.tags.join(", ")}]` : "";
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Created item ${result.id} in ${result.category}: "${result.title}"${tagStr}`,
+        },
+      ],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: memento_item_update
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "memento_item_update",
+  "Update a working memory item (partial update — only provided fields change)",
+  {
+    id: z.string().describe("Item ID to update"),
+    title: z.string().optional().describe("New title"),
+    content: z.string().optional().describe("New content"),
+    category: z
+      .enum(["active_work", "standing_decision", "skip", "waiting_for", "session_note", "activity_log"])
+      .optional()
+      .describe("New category"),
+    status: z
+      .enum(["active", "paused", "completed", "archived"])
+      .optional()
+      .describe("New status"),
+    priority: z.number().optional().describe("New priority"),
+    tags: z.array(z.string()).optional().describe("New tags (replaces existing)"),
+    next_action: z.string().optional().describe("New next action"),
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
+  },
+  async ({ id, title, content, category, status, priority, tags, next_action, path: customPath }) => {
+    const ws = isHosted ? null : resolveWs(customPath);
+    const data = {};
+    if (title !== undefined) data.title = title;
+    if (content !== undefined) data.content = content;
+    if (category !== undefined) data.category = category;
+    if (status !== undefined) data.status = status;
+    if (priority !== undefined) data.priority = priority;
+    if (tags !== undefined) data.tags = tags;
+    if (next_action !== undefined) data.next_action = next_action;
+
+    const result = await storage.updateItem(ws, id, data);
+
+    if (result.error) {
+      return { content: [{ type: "text", text: result.error }], isError: true };
+    }
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Updated item ${id}: "${result.title}" (${result.status})`,
+        },
+      ],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: memento_item_delete
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "memento_item_delete",
+  "Delete a working memory item",
+  {
+    id: z.string().describe("Item ID to delete"),
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
+  },
+  async ({ id, path: customPath }) => {
+    const ws = isHosted ? null : resolveWs(customPath);
+    const result = await storage.deleteItem(ws, id);
+
+    if (result.error) {
+      return { content: [{ type: "text", text: result.error }], isError: true };
+    }
+
+    return {
+      content: [{ type: "text", text: `Deleted item ${id}.` }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: memento_item_list
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "memento_item_list",
+  "List working memory items with optional filters",
+  {
+    category: z
+      .enum(["active_work", "standing_decision", "skip", "waiting_for", "session_note", "activity_log"])
+      .optional()
+      .describe("Filter by category"),
+    status: z
+      .enum(["active", "paused", "completed", "archived"])
+      .optional()
+      .describe("Filter by status"),
+    query: z.string().optional().describe("Search title and content"),
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
+  },
+  async ({ category, status, query, path: customPath }) => {
+    const ws = isHosted ? null : resolveWs(customPath);
+    const result = await storage.listItems(ws, { category, status, query });
+
+    if (result.error) {
+      return { content: [{ type: "text", text: result.error }], isError: true };
+    }
+
+    if (!result.items || result.items.length === 0) {
+      return {
+        content: [{ type: "text", text: "No working memory items found." }],
+      };
+    }
+
+    const formatted = result.items
+      .map((item) => {
+        const tagStr = item.tags?.length ? ` [${item.tags.join(", ")}]` : "";
+        const statusStr = item.status !== "active" ? ` (${item.status})` : "";
+        const nextStr = item.next_action ? `\n  Next: ${item.next_action}` : "";
+        return `**${item.id}** ${item.category}: ${item.title}${statusStr}${tagStr}${nextStr}`;
+      })
+      .join("\n\n");
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `Found ${result.total} item${result.total === 1 ? "" : "s"}:\n\n${formatted}`,
+        },
+      ],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 

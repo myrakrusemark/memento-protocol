@@ -1,9 +1,13 @@
 /**
- * Memory store/recall routes.
+ * Memory store/recall/browse routes.
  *
- * POST /v1/memories       — Store a new memory
- * GET  /v1/memories/recall — Search memories by query, tags, type
- * DELETE /v1/memories/:id  — Delete a specific memory
+ * POST   /v1/memories         — Store a new memory
+ * GET    /v1/memories         — List/browse all memories
+ * GET    /v1/memories/recall  — Search memories by query, tags, type
+ * POST   /v1/memories/ingest  — Bulk store memories (pre-compact)
+ * GET    /v1/memories/:id     — Get single memory
+ * PUT    /v1/memories/:id     — Update memory (partial)
+ * DELETE /v1/memories/:id     — Delete a specific memory
  */
 
 import { Hono } from "hono";
@@ -11,6 +15,14 @@ import { randomUUID } from "node:crypto";
 import { scoreAndRankMemories } from "../services/scoring.js";
 
 const memories = new Hono();
+
+function safeParseTags(tagsStr) {
+  try {
+    return JSON.parse(tagsStr || "[]");
+  } catch {
+    return [];
+  }
+}
 
 // POST /v1/memories — Store a memory
 memories.post("/", async (c) => {
@@ -49,6 +61,80 @@ memories.post("/", async (c) => {
     },
     201
   );
+});
+
+// GET /v1/memories — List/browse all memories
+memories.get("/", async (c) => {
+  const db = c.get("workspaceDb");
+  const typeParam = c.req.query("type");
+  const tagsParam = c.req.query("tags");
+  const statusParam = c.req.query("status") || "active";
+  const sort = c.req.query("sort") || "created_at";
+  const order = c.req.query("order") || "desc";
+  const limit = Math.min(100, Math.max(1, parseInt(c.req.query("limit") || "50", 10)));
+  const offset = Math.max(0, parseInt(c.req.query("offset") || "0", 10));
+  const now = new Date().toISOString();
+
+  let whereClauses = [];
+  const args = [];
+
+  // Status filter
+  if (statusParam === "active") {
+    whereClauses.push("consolidated = 0");
+    whereClauses.push("(expires_at IS NULL OR expires_at > ?)");
+    args.push(now);
+  } else if (statusParam === "consolidated") {
+    whereClauses.push("consolidated = 1");
+  } else if (statusParam === "expired") {
+    whereClauses.push("expires_at IS NOT NULL AND expires_at <= ?");
+    args.push(now);
+  }
+  // "all" = no status filter
+
+  if (typeParam) {
+    whereClauses.push("type = ?");
+    args.push(typeParam);
+  }
+
+  if (tagsParam) {
+    const tags = tagsParam.split(",").map((t) => t.trim().toLowerCase());
+    const tagConditions = tags.map(() => "LOWER(tags) LIKE ?");
+    whereClauses.push(`(${tagConditions.join(" OR ")})`);
+    for (const t of tags) {
+      args.push(`%${t}%`);
+    }
+  }
+
+  const whereStr = whereClauses.length ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+  // Validate sort column
+  const validSorts = ["created_at", "relevance", "access_count", "last_accessed_at"];
+  const sortCol = validSorts.includes(sort) ? sort : "created_at";
+  const sortOrder = order === "asc" ? "ASC" : "DESC";
+
+  // Count total
+  const countResult = await db.execute({
+    sql: `SELECT COUNT(*) as count FROM memories ${whereStr}`,
+    args,
+  });
+  const total = countResult.rows[0].count;
+
+  // Fetch page
+  const result = await db.execute({
+    sql: `SELECT id, content, type, tags, created_at, expires_at, relevance,
+                 access_count, last_accessed_at, consolidated, consolidated_into
+          FROM memories ${whereStr}
+          ORDER BY ${sortCol} ${sortOrder}
+          LIMIT ? OFFSET ?`,
+    args: [...args, limit, offset],
+  });
+
+  const memories = result.rows.map((row) => ({
+    ...row,
+    tags: safeParseTags(row.tags),
+  }));
+
+  return c.json({ memories, total, offset, limit });
 });
 
 // GET /v1/memories/recall — Search memories
@@ -146,6 +232,129 @@ memories.get("/recall", async (c) => {
       },
     ],
   });
+});
+
+// POST /v1/memories/ingest — Bulk store memories (pre-compact)
+memories.post("/ingest", async (c) => {
+  const db = c.get("workspaceDb");
+  const body = await c.req.json();
+
+  const items = body.memories;
+  if (!Array.isArray(items) || items.length === 0) {
+    return c.json(
+      { error: 'Missing or empty "memories" array.' },
+      400
+    );
+  }
+
+  if (items.length > 100) {
+    return c.json(
+      { error: "Maximum 100 memories per ingest request." },
+      400
+    );
+  }
+
+  const source = body.source || "bulk";
+  const ids = [];
+
+  for (const item of items) {
+    if (!item.content) continue;
+
+    const id = randomUUID().slice(0, 8);
+    const type = item.type || "observation";
+    const tags = JSON.stringify([...(item.tags || []), `source:${source}`]);
+    const expiresAt = item.expires || null;
+
+    await db.execute({
+      sql: `INSERT INTO memories (id, content, type, tags, expires_at)
+            VALUES (?, ?, ?, ?, ?)`,
+      args: [id, item.content, type, tags, expiresAt],
+    });
+
+    ids.push(id);
+  }
+
+  return c.json(
+    { ingested: ids.length, ids, source },
+    201
+  );
+});
+
+// GET /v1/memories/:id — Get single memory
+memories.get("/:id", async (c) => {
+  const db = c.get("workspaceDb");
+  const memoryId = c.req.param("id");
+
+  const result = await db.execute({
+    sql: `SELECT id, content, type, tags, created_at, expires_at, relevance,
+                 access_count, last_accessed_at, consolidated, consolidated_into
+          FROM memories WHERE id = ?`,
+    args: [memoryId],
+  });
+
+  if (result.rows.length === 0) {
+    return c.json({ error: "Memory not found." }, 404);
+  }
+
+  const row = result.rows[0];
+  return c.json({ ...row, tags: safeParseTags(row.tags) });
+});
+
+// PUT /v1/memories/:id — Update memory (partial)
+memories.put("/:id", async (c) => {
+  const db = c.get("workspaceDb");
+  const memoryId = c.req.param("id");
+  const body = await c.req.json();
+
+  const existing = await db.execute({
+    sql: "SELECT id FROM memories WHERE id = ?",
+    args: [memoryId],
+  });
+
+  if (existing.rows.length === 0) {
+    return c.json({ error: "Memory not found." }, 404);
+  }
+
+  const updates = [];
+  const args = [];
+
+  if (body.content !== undefined) {
+    updates.push("content = ?");
+    args.push(body.content);
+  }
+  if (body.type !== undefined) {
+    updates.push("type = ?");
+    args.push(body.type);
+  }
+  if (body.tags !== undefined) {
+    updates.push("tags = ?");
+    args.push(JSON.stringify(body.tags));
+  }
+  if (body.expires !== undefined) {
+    updates.push("expires_at = ?");
+    args.push(body.expires);
+  }
+
+  if (updates.length === 0) {
+    return c.json({ error: "No fields to update." }, 400);
+  }
+
+  args.push(memoryId);
+  await db.execute({
+    sql: `UPDATE memories SET ${updates.join(", ")} WHERE id = ?`,
+    args,
+  });
+
+  // Return updated
+  const result = await db.execute({
+    sql: `SELECT id, content, type, tags, created_at, expires_at, relevance,
+                 access_count, last_accessed_at, consolidated, consolidated_into
+          FROM memories WHERE id = ?`,
+    args: [memoryId],
+  });
+
+  const row = result.rows[0];
+  return c.json({ ...row, tags: safeParseTags(row.tags) });
 });
 
 // DELETE /v1/memories/:id — Delete a memory

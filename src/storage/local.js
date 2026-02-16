@@ -236,6 +236,136 @@ export class LocalStorageAdapter extends StorageInterface {
     return { match: null, query };
   }
 
+  // -------------------------------------------------------------------------
+  // Working memory items (local file-based storage)
+  // -------------------------------------------------------------------------
+
+  _itemsPath(wsPath) {
+    return path.join(wsPath, "items");
+  }
+
+  async createItem(wsPath, data) {
+    const dir = this._itemsPath(wsPath);
+    ensureDir(dir);
+
+    const id = randomUUID().slice(0, 8);
+    const item = {
+      id,
+      category: data.category,
+      title: data.title,
+      content: data.content || "",
+      status: data.status || "active",
+      priority: data.priority || 0,
+      tags: data.tags || [],
+      next_action: data.next_action || null,
+      last_touched: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    fs.writeFileSync(
+      path.join(dir, `${id}.json`),
+      JSON.stringify(item, null, 2),
+      "utf-8"
+    );
+
+    return item;
+  }
+
+  async updateItem(wsPath, id, data) {
+    const filePath = path.join(this._itemsPath(wsPath), `${id}.json`);
+    const raw = readFileSafe(filePath);
+    if (!raw) return { error: "Item not found." };
+
+    const item = JSON.parse(raw);
+
+    if (data.title !== undefined) item.title = data.title;
+    if (data.content !== undefined) item.content = data.content;
+    if (data.category !== undefined) item.category = data.category;
+    if (data.status !== undefined) item.status = data.status;
+    if (data.priority !== undefined) item.priority = data.priority;
+    if (data.tags !== undefined) item.tags = data.tags;
+    if (data.next_action !== undefined) item.next_action = data.next_action;
+
+    item.updated_at = new Date().toISOString();
+    item.last_touched = new Date().toISOString();
+
+    fs.writeFileSync(filePath, JSON.stringify(item, null, 2), "utf-8");
+    return item;
+  }
+
+  async deleteItem(wsPath, id) {
+    const filePath = path.join(this._itemsPath(wsPath), `${id}.json`);
+    if (!fs.existsSync(filePath)) return { error: "Item not found." };
+    fs.unlinkSync(filePath);
+    return { deleted: true, id };
+  }
+
+  async listItems(wsPath, filters = {}) {
+    const dir = this._itemsPath(wsPath);
+    if (!fs.existsSync(dir)) return { items: [], total: 0 };
+
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith(".json"));
+    let items = [];
+
+    for (const file of files) {
+      try {
+        const raw = fs.readFileSync(path.join(dir, file), "utf-8");
+        items.push(JSON.parse(raw));
+      } catch {
+        // skip malformed
+      }
+    }
+
+    if (filters.category) {
+      items = items.filter((i) => i.category === filters.category);
+    }
+    if (filters.status) {
+      items = items.filter((i) => i.status === filters.status);
+    }
+    if (filters.query) {
+      const q = filters.query.toLowerCase();
+      items = items.filter(
+        (i) =>
+          i.title.toLowerCase().includes(q) ||
+          i.content.toLowerCase().includes(q)
+      );
+    }
+
+    items.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+    return { items, total: items.length };
+  }
+
+  async getContext(wsPath, message) {
+    // Local mode: assemble context from files
+    const itemsResult = await this.listItems(wsPath, { status: "active" });
+    const recallResult = message
+      ? await this.recallMemories(wsPath, { query: message, limit: 10 })
+      : { results: [] };
+    const skipResult = message
+      ? await this.checkSkip(wsPath, message)
+      : { match: null };
+
+    return {
+      working_memory: {
+        items: itemsResult.items || [],
+        total_active: itemsResult.total || 0,
+      },
+      memories: {
+        matches: (recallResult.results || []).map((r) => ({
+          id: r.memory.id,
+          content: r.memory.content,
+          type: r.memory.type,
+          tags: r.memory.tags || [],
+          score: r.score,
+        })),
+      },
+      skip_matches: skipResult.match ? [skipResult.match] : [],
+      identity: null,
+    };
+  }
+
   async getHealth(wsPath) {
     if (!fs.existsSync(wsPath)) {
       return { error: `No workspace found at ${wsPath}. Run memento_init to create one.` };
