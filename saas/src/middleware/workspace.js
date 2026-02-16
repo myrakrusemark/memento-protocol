@@ -1,13 +1,19 @@
 /**
- * Workspace middleware — resolves workspace from header and ensures it exists.
+ * Workspace middleware -- resolves workspace from header and ensures it exists.
  *
  * Reads X-Memento-Workspace header (default: "default").
  * If workspace doesn't exist for this user, auto-creates it and initializes tables.
+ * In Turso mode, creates a new edge database per workspace.
  * Attaches workspaceId, workspaceName, and workspaceDb to context.
  */
 
 import { randomUUID } from "node:crypto";
 import { getControlDb, getWorkspaceDb, initSchema } from "../db/connection.js";
+import {
+  isTursoConfigured,
+  createTursoDatabase,
+  createTursoToken,
+} from "../services/turso.js";
 
 /**
  * Seed default working memory sections in a new workspace.
@@ -41,32 +47,44 @@ export function workspaceMiddleware() {
     const controlDb = getControlDb();
 
     // Look up workspace
-    let result = await controlDb.execute({
-      sql: "SELECT id FROM workspaces WHERE user_id = ? AND name = ?",
+    const result = await controlDb.execute({
+      sql: "SELECT id, db_url, db_token FROM workspaces WHERE user_id = ? AND name = ?",
       args: [userId, workspaceName],
     });
 
     let workspaceId;
+    let dbUrl = null;
+    let dbToken = null;
 
     if (result.rows.length === 0) {
       // Auto-create workspace
       workspaceId = randomUUID().slice(0, 8);
+
+      if (isTursoConfigured()) {
+        // Create a dedicated Turso database for this workspace
+        const tursoDb = await createTursoDatabase(workspaceId);
+        const token = await createTursoToken(tursoDb.dbName);
+        dbUrl = tursoDb.dbUrl;
+        dbToken = token;
+      }
+
       await controlDb.execute({
-        sql: "INSERT INTO workspaces (id, user_id, name) VALUES (?, ?, ?)",
-        args: [workspaceId, userId, workspaceName],
+        sql: "INSERT INTO workspaces (id, user_id, name, db_url, db_token) VALUES (?, ?, ?, ?, ?)",
+        args: [workspaceId, userId, workspaceName, dbUrl, dbToken],
       });
 
       // Initialize workspace tables and seed working memory
-      const wsDb = getWorkspaceDb();
+      const wsDb = getWorkspaceDb(dbUrl, dbToken);
       await initSchema(wsDb, "workspace");
       await seedWorkingMemory(wsDb);
     } else {
       workspaceId = result.rows[0].id;
+      dbUrl = result.rows[0].db_url;
+      dbToken = result.rows[0].db_token;
     }
 
-    // In dev mode, workspace DB is the same as control DB.
-    // In production, this would resolve to a per-workspace Turso URL.
-    const wsDb = getWorkspaceDb();
+    // Get workspace DB client (uses Turso URL if available, falls back to dev DB)
+    const wsDb = getWorkspaceDb(dbUrl, dbToken);
 
     c.set("workspaceId", workspaceId);
     c.set("workspaceName", workspaceName);

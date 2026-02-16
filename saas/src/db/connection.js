@@ -27,36 +27,46 @@ export function setTestDb(client) {
 }
 
 /**
- * Get or create a libsql client for the given URL.
+ * Get or create a libsql client for the given URL and optional auth token.
  * Caches clients so repeated calls return the same instance.
  */
-function getClient(url) {
-  if (clientCache.has(url)) {
-    return clientCache.get(url);
+function getClient(url, authToken) {
+  const cacheKey = authToken ? `${url}::${authToken.slice(0, 16)}` : url;
+  if (clientCache.has(cacheKey)) {
+    return clientCache.get(cacheKey);
   }
-  const client = createClient({ url });
-  clientCache.set(url, client);
+  const opts = { url };
+  if (authToken) opts.authToken = authToken;
+  const client = createClient(opts);
+  clientCache.set(cacheKey, client);
   return client;
 }
 
 /**
  * Get the control plane database client.
  * Reads MEMENTO_DB_URL env var, defaults to file:./dev.db.
+ * Supports MEMENTO_DB_TOKEN for Turso auth.
  */
 export function getControlDb() {
   if (_testOverride) return _testOverride;
   const url = process.env.MEMENTO_DB_URL || DEFAULT_DB_URL;
-  return getClient(url);
+  const authToken = process.env.MEMENTO_DB_TOKEN || undefined;
+  return getClient(url, authToken);
 }
 
 /**
  * Get a workspace-specific database client.
  * In dev mode this returns the same DB as control plane.
- * In production, each workspace would get its own Turso database.
+ * In production, each workspace gets its own Turso database.
+ *
+ * @param {string} [dbUrl] - Turso database URL for this workspace
+ * @param {string} [dbToken] - Auth token for this workspace's database
  */
-export function getWorkspaceDb(dbUrl) {
+export function getWorkspaceDb(dbUrl, dbToken) {
   if (_testOverride) return _testOverride;
-  return getClient(dbUrl || process.env.MEMENTO_DB_URL || DEFAULT_DB_URL);
+  const url = dbUrl || process.env.MEMENTO_DB_URL || DEFAULT_DB_URL;
+  const authToken = dbToken || process.env.MEMENTO_DB_TOKEN || undefined;
+  return getClient(url, authToken);
 }
 
 // ---------------------------------------------------------------------------
@@ -88,6 +98,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),
   name TEXT NOT NULL,
+  db_url TEXT,
+  db_token TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')),
   UNIQUE(user_id, name)

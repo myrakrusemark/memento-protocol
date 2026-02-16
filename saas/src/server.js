@@ -10,7 +10,6 @@
  */
 
 import { Hono } from "hono";
-import { serve } from "@hono/node-server";
 import { getControlDb, initSchema } from "./db/connection.js";
 import { authMiddleware } from "./middleware/auth.js";
 import { workspaceMiddleware } from "./middleware/workspace.js";
@@ -68,6 +67,8 @@ if (isMainModule) {
 
   const app = createApp();
 
+  // Dynamic import so Workers bundler doesn't pull in Node-only deps
+  const { serve } = await import("@hono/node-server");
   serve({ fetch: app.fetch, port }, () => {
     console.log(`Memento SaaS API running on http://localhost:${port}`);
   });

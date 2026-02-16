@@ -1,0 +1,14 @@
+name = "memento-api"
+main = "src/worker.js"
+compatibility_date = "2025-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Environment variables are set via `wrangler secret put`
+# Required secrets:
+#   MEMENTO_DB_URL    - Turso control plane database URL
+#   MEMENTO_DB_TOKEN  - Turso control plane auth token
+#   TURSO_API_TOKEN   - Turso Platform API token (for creating workspace DBs)
+#   TURSO_ORG         - Turso organization slug
+
+[observability]
+enabled = true

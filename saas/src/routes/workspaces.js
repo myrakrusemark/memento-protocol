@@ -1,14 +1,20 @@
 /**
  * Workspace management routes.
  *
- * POST /v1/workspaces — Create a workspace explicitly
- * GET  /v1/workspaces — List user's workspaces
- * DELETE /v1/workspaces/:id — Delete a workspace
+ * POST /v1/workspaces -- Create a workspace explicitly
+ * GET  /v1/workspaces -- List user's workspaces
+ * DELETE /v1/workspaces/:id -- Delete a workspace
  */
 
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { getControlDb, getWorkspaceDb, initSchema } from "../db/connection.js";
+import {
+  isTursoConfigured,
+  createTursoDatabase,
+  createTursoToken,
+  deleteTursoDatabase,
+} from "../services/turso.js";
 
 const workspaces = new Hono();
 
@@ -33,7 +39,7 @@ async function seedWorkingMemory(db) {
   }
 }
 
-// POST /v1/workspaces — Create workspace
+// POST /v1/workspaces -- Create workspace
 workspaces.post("/", async (c) => {
   const userId = c.get("userId");
   const body = await c.req.json();
@@ -62,13 +68,23 @@ workspaces.post("/", async (c) => {
   }
 
   const id = randomUUID().slice(0, 8);
+  let dbUrl = null;
+  let dbToken = null;
+
+  if (isTursoConfigured()) {
+    const tursoDb = await createTursoDatabase(id);
+    const token = await createTursoToken(tursoDb.dbName);
+    dbUrl = tursoDb.dbUrl;
+    dbToken = token;
+  }
+
   await controlDb.execute({
-    sql: "INSERT INTO workspaces (id, user_id, name) VALUES (?, ?, ?)",
-    args: [id, userId, name],
+    sql: "INSERT INTO workspaces (id, user_id, name, db_url, db_token) VALUES (?, ?, ?, ?, ?)",
+    args: [id, userId, name, dbUrl, dbToken],
   });
 
   // Initialize workspace tables
-  const wsDb = getWorkspaceDb();
+  const wsDb = getWorkspaceDb(dbUrl, dbToken);
   await initSchema(wsDb, "workspace");
   await seedWorkingMemory(wsDb);
 
@@ -85,7 +101,7 @@ workspaces.post("/", async (c) => {
   );
 });
 
-// GET /v1/workspaces — List workspaces
+// GET /v1/workspaces -- List workspaces
 workspaces.get("/", async (c) => {
   const userId = c.get("userId");
   const controlDb = getControlDb();
@@ -112,15 +128,15 @@ workspaces.get("/", async (c) => {
   });
 });
 
-// DELETE /v1/workspaces/:id — Delete workspace
+// DELETE /v1/workspaces/:id -- Delete workspace
 workspaces.delete("/:id", async (c) => {
   const userId = c.get("userId");
   const workspaceId = c.req.param("id");
   const controlDb = getControlDb();
 
-  // Verify ownership
+  // Verify ownership and get db info
   const result = await controlDb.execute({
-    sql: "SELECT id, name FROM workspaces WHERE id = ? AND user_id = ?",
+    sql: "SELECT id, name, db_url FROM workspaces WHERE id = ? AND user_id = ?",
     args: [workspaceId, userId],
   });
 
@@ -133,6 +149,19 @@ workspaces.delete("/:id", async (c) => {
     );
   }
 
+  const workspace = result.rows[0];
+
+  // Delete the Turso database if one exists
+  if (workspace.db_url && isTursoConfigured()) {
+    const dbName = `memento-ws-${workspaceId}`;
+    try {
+      await deleteTursoDatabase(dbName);
+    } catch (err) {
+      // Log but don't block workspace deletion if Turso cleanup fails
+      console.error(`Failed to delete Turso database ${dbName}:`, err.message);
+    }
+  }
+
   await controlDb.execute({
     sql: "DELETE FROM workspaces WHERE id = ?",
     args: [workspaceId],
@@ -142,7 +171,7 @@ workspaces.delete("/:id", async (c) => {
     content: [
       {
         type: "text",
-        text: `Workspace "${result.rows[0].name}" deleted.`,
+        text: `Workspace "${workspace.name}" deleted.`,
       },
     ],
   });
