@@ -1,0 +1,19 @@
+{
+  "name": "memento-protocol",
+  "version": "0.1.0",
+  "description": "The Memento Protocol — persistent memory for AI agents",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "memento-server": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.24.2"
+  },
+  "keywords": ["mcp", "memory", "ai-agent", "persistent", "memento"],
+  "license": "MIT"
+}
