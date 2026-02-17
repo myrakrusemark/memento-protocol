@@ -120,10 +120,14 @@ export function registerAuthRoutes(app) {
 
     // Parse optional body
     let name = "default";
+    let workspaceName = "default";
     try {
       const body = await c.req.json();
       if (body.name && typeof body.name === "string") {
         name = body.name.slice(0, 100).trim() || "default";
+      }
+      if (body.workspace && typeof body.workspace === "string") {
+        workspaceName = body.workspace.slice(0, 100).trim().toLowerCase().replace(/[^a-z0-9_-]/g, "-") || "default";
       }
     } catch {
       // No body or invalid JSON — that's fine, use defaults
@@ -158,7 +162,7 @@ export function registerAuthRoutes(app) {
     // will handle it on first authenticated request.
     await controlDb.execute({
       sql: "INSERT INTO workspaces (id, user_id, name) VALUES (?, ?, ?)",
-      args: [workspaceId, userId, "default"],
+      args: [workspaceId, userId, workspaceName],
     });
 
     // Initialize workspace schema + seed working memory
@@ -172,7 +176,7 @@ export function registerAuthRoutes(app) {
     return c.json(
       {
         api_key: apiKey,
-        workspace: "default",
+        workspace: workspaceName,
         user_id: userId,
         api_url: "https://memento-api.myrakrusemark.workers.dev",
         plan: "free",
