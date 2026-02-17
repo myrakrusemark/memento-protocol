@@ -4,8 +4,6 @@ Persistent memory for AI agents.
 
 AI agents have anterograde amnesia. Every session starts blank. The Memento Protocol gives agents a structured way to remember — not by recording everything, but by writing **instructions to their future selves**.
 
-This is a reference MCP server implementation. File-based, zero cloud dependencies, works with Claude Code out of the box.
-
 ## Philosophy
 
 ### Instructions Over Logs
@@ -30,221 +28,55 @@ Agent-driven consolidation is preferred over automatic: the agent reads three ov
 
 Memories aren't permanent. They have types (fact, decision, observation, instruction), optional tags for retrieval, and optional expiration dates. Expired memories stop appearing in recall results. Working memory sections get rewritten, not appended to. The goal is a living document, not an ever-growing archive.
 
-## Installation
+---
+
+## Get Started (Hosted)
+
+The hosted backend gives you semantic search, relevance decay, memory consolidation, identity crystals, and multi-workspace isolation. One curl to sign up, then configure and go.
+
+### Step 1: Sign up
 
 ```bash
-# Clone the repo
-git clone https://github.com/anthropics/memento-protocol.git
-cd memento-protocol
-npm install
+curl -X POST https://memento-api.myrakrusemark.workers.dev/v1/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com", "workspace": "my-project"}'
 ```
 
-### Register with Claude Code
-
-Add to your project's `.mcp.json`:
+Response:
 
 ```json
 {
-  "mcpServers": {
-    "memento": {
-      "command": "node",
-      "args": ["/absolute/path/to/memento-protocol/src/index.js"]
-    }
-  }
+  "api_key": "mp_live_abc123...",
+  "workspace": "default",
+  "user_id": "a1b2c3d4",
+  "api_url": "https://memento-api.myrakrusemark.workers.dev",
+  "plan": "free",
+  "limits": { "memories": 100, "items": 20, "workspaces": 1 }
 }
 ```
 
-Or register globally in `~/.claude.json`:
+Save the `api_key` — you'll need it in the next step.
 
-```json
-{
-  "mcpServers": {
-    "memento": {
-      "command": "node",
-      "args": ["/absolute/path/to/memento-protocol/src/index.js"]
-    }
-  }
-}
-```
-
-Restart Claude Code. The tools will be available immediately.
-
-## Quick Start
-
-```
-> Use memento_init to set up memory for this project
-> Use memento_read to check working memory
-> Use memento_update to record what you're working on
-> Use memento_store to save a decision you've made
-> Use memento_recall to find past memories
-```
-
-That's it. The agent reads working memory at session start, updates it as it works, and writes instructions for next time.
-
-## Tools
-
-### `memento_init`
-
-Initialize a new workspace. Creates `.memento/` with a working memory template, memories directory, and skip list index.
-
-| Parameter | Type   | Default            | Description        |
-| --------- | ------ | ------------------ | ------------------ |
-| `path`    | string | `.memento/` in cwd | Workspace location |
-
-### `memento_read`
-
-Read working memory — the full document or a specific section.
-
-| Parameter | Type   | Default     | Description                                                                       |
-| --------- | ------ | ----------- | --------------------------------------------------------------------------------- |
-| `section` | string | (all)       | `active_work`, `standing_decisions`, `skip_list`, `activity_log`, `session_notes` |
-| `path`    | string | auto-detect | Workspace location                                                                |
-
-### `memento_update`
-
-Update a section of working memory with new content.
-
-| Parameter | Type   | Required | Description                 |
-| --------- | ------ | -------- | --------------------------- |
-| `section` | string | yes      | Section key (see above)     |
-| `content` | string | yes      | New content for the section |
-| `path`    | string | no       | Workspace location          |
-
-### `memento_store`
-
-Store a discrete memory with metadata.
-
-| Parameter | Type     | Default       | Description                                      |
-| --------- | -------- | ------------- | ------------------------------------------------ |
-| `content` | string   | (required)    | The memory content                               |
-| `tags`    | string[] | `[]`          | Tags for categorization                          |
-| `type`    | string   | `observation` | `fact`, `decision`, `observation`, `instruction` |
-| `expires` | string   | (none)        | ISO date when this memory expires                |
-| `path`    | string   | auto-detect   | Workspace location                               |
-
-### `memento_recall`
-
-Search stored memories by keyword, tag, or type.
-
-| Parameter | Type     | Default     | Description                          |
-| --------- | -------- | ----------- | ------------------------------------ |
-| `query`   | string   | (required)  | Search terms matched against content |
-| `tags`    | string[] | (none)      | Filter by tags (matches any)         |
-| `type`    | string   | (none)      | Filter by memory type                |
-| `limit`   | number   | `10`        | Max results                          |
-| `path`    | string   | auto-detect | Workspace location                   |
-
-### `memento_consolidate`
-
-Consolidate multiple overlapping memories into a single, richer memory. Originals are deactivated but never deleted.
-
-| Parameter    | Type     | Default     | Description                                                  |
-| ------------ | -------- | ----------- | ------------------------------------------------------------ |
-| `source_ids` | string[] | (required)  | IDs of memories to consolidate (minimum 2)                   |
-| `content`    | string   | (generated) | Your synthesis (recommended). If omitted, AI/template summary is generated |
-| `type`       | string   | (inferred)  | Type for the new memory (default: most common among sources) |
-| `tags`       | string[] | (none)      | Additional tags (merged with source tags)                    |
-| `path`       | string   | auto-detect | Workspace location                                          |
-
-### `memento_skip_add`
-
-Add an item to the skip list. Also updates the Skip List section in working memory.
-
-| Parameter | Type   | Required | Description            |
-| --------- | ------ | -------- | ---------------------- |
-| `item`    | string | yes      | What to skip           |
-| `reason`  | string | yes      | Why                    |
-| `expires` | string | yes      | When this skip expires |
-| `path`    | string | no       | Workspace location     |
-
-### `memento_skip_check`
-
-Check if something is on the skip list. Auto-purges expired entries.
-
-| Parameter | Type   | Required | Description        |
-| --------- | ------ | -------- | ------------------ |
-| `query`   | string | yes      | What to check      |
-| `path`    | string | no       | Workspace location |
-
-### `memento_health`
-
-Report memory system health — total memories, staleness warnings, expired entry counts.
-
-| Parameter | Type   | Required | Description        |
-| --------- | ------ | -------- | ------------------ |
-| `path`    | string | no       | Workspace location |
-
-## Storage Layout
-
-```
-.memento/
-├── working-memory.md    # The core document — read every session
-├── memories/            # One JSON file per stored memory
-│   ├── a1b2c3d4.json
-│   └── e5f6g7h8.json
-└── skip-index.json      # Queryable skip list entries
-```
-
-Working memory is a single markdown file. Memories are individual JSON files (easy to inspect, easy to back up). The skip list index is a JSON array for fast lookups.
-
-## Adding to `.gitignore`
-
-You'll probably want to track working memory but not individual memory files:
-
-```gitignore
-.memento/memories/
-.memento/skip-index.json
-```
-
-Or ignore the whole thing if memory is per-machine:
-
-```gitignore
-.memento/
-```
-
-## Development
+### Step 2: Install the MCP server
 
 ```bash
-npm test              # Run unit + integration tests
-npm run lint          # Lint with ESLint
-npm run format:check  # Check formatting with Prettier
-npm run test:smoke    # Quick smoke test of all tools
+git clone https://github.com/myrakrusemark/memento-protocol.git
+cd memento-protocol && npm install
 ```
 
-## Architecture
+### Step 3: Configure your MCP client
 
-The Memento Protocol supports two modes:
-
-- **Local mode** (default) — File-based storage in `.memento/`. Zero dependencies beyond the MCP SDK. Everything documented above.
-- **Hosted mode** — SaaS API backend. Same MCP tools, same protocol. Adds relevance scoring with decay, automatic memory consolidation, identity crystallization, and multi-agent workspace isolation. Switch backends with an env var.
-
-The MCP server detects which mode to use automatically: if `MEMENTO_API_KEY` and `MEMENTO_API_URL` are set, it uses the hosted backend. Otherwise, it falls back to local file storage.
-
-## Hosted Mode
-
-### Setup
-
-Set three environment variables:
-
-| Variable            | Description                                                        |
-| ------------------- | ------------------------------------------------------------------ |
-| `MEMENTO_API_KEY`   | API key (starts with `mp_live_`)                                   |
-| `MEMENTO_API_URL`   | API base URL (e.g. `https://memento-saas.your-domain.workers.dev`) |
-| `MEMENTO_WORKSPACE` | Workspace name (default: `default`)                                |
-
-### MCP Configuration
-
-Add to your project's `.mcp.json`:
+Add to your project's `.mcp.json` (or `~/.claude.json` for global):
 
 ```json
 {
   "mcpServers": {
     "memento": {
       "command": "node",
-      "args": ["/path/to/memento-protocol/src/index.js"],
+      "args": ["/absolute/path/to/memento-protocol/src/index.js"],
       "env": {
         "MEMENTO_API_KEY": "mp_live_your_key_here",
-        "MEMENTO_API_URL": "https://memento-saas.your-domain.workers.dev",
+        "MEMENTO_API_URL": "https://memento-api.myrakrusemark.workers.dev",
         "MEMENTO_WORKSPACE": "my-project"
       }
     }
@@ -252,7 +84,179 @@ Add to your project's `.mcp.json`:
 }
 ```
 
-The MCP tools (`memento_init`, `memento_read`, etc.) work identically in both modes. The agent doesn't need to know which backend is active.
+### Step 4: Restart Claude Code
+
+The MCP server connects at startup. Restart your client so it picks up the new config.
+
+### Step 5: First session
+
+```
+> memento_health()              # verify connection
+> memento_store(                # store your first memory
+    content: "API uses /v2 endpoints. Auth is Bearer token in header.",
+    type: "instruction",
+    tags: ["api", "auth"]
+  )
+> memento_recall(query: "api auth")   # find it again
+```
+
+That's it. The agent reads memory at session start, updates it as it works, and writes instructions for next time.
+
+---
+
+## Get Started (Local)
+
+Local mode uses file-based storage in a `.memento/` directory — zero cloud dependencies, works offline, no account needed.
+
+### Install
+
+```bash
+git clone https://github.com/myrakrusemark/memento-protocol.git
+cd memento-protocol && npm install
+```
+
+### Configure
+
+Add to your project's `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "memento": {
+      "command": "node",
+      "args": ["/absolute/path/to/memento-protocol/src/index.js"]
+    }
+  }
+}
+```
+
+No `env` block needed — the server detects local mode automatically when `MEMENTO_API_KEY` is absent.
+
+Restart Claude Code, then run `memento_init()` to create the workspace.
+
+---
+
+## Add to Your CLAUDE.md
+
+Paste this block into your project's `CLAUDE.md` to teach your agent memory discipline:
+
+```markdown
+## Memory (Memento Protocol)
+
+On session start:
+1. `memento_health` — verify connection
+2. `memento_item_list` — check active work items and their next actions
+3. `memento_recall` with current task context — find relevant past memories
+
+Writing memories:
+- Instructions, not logs: "API moved to /v2 — update all calls" not "checked API, got 404"
+- Tag generously — tags power recall and consolidation
+- Set expiration on time-sensitive facts
+- Use `memento_skip_add` for things to actively avoid (with expiry)
+- Use `memento_item_create` for structured work tracking with next actions
+
+Before session ends:
+- `memento_item_update` with progress on active work (include what was done AND what comes next)
+- `memento_store` for new decisions and discoveries
+- `memento_skip_add` for things to skip next time
+```
+
+---
+
+## Hooks (Optional)
+
+Hooks automate memory at session boundaries — no manual calls needed.
+
+### Auto-recall on every message (UserPromptSubmit)
+
+Create `.claude/hooks/memory-recall.sh`:
+
+```bash
+#!/bin/bash
+# Recall relevant memories before every response
+QUERY="$1"
+RESULT=$(curl -s "https://memento-api.myrakrusemark.workers.dev/v1/memories/recall?query=$(echo "$QUERY" | jq -sRr @uri)&limit=5" \
+  -H "Authorization: Bearer $MEMENTO_API_KEY" \
+  -H "X-Memento-Workspace: $MEMENTO_WORKSPACE")
+
+COUNT=$(echo "$RESULT" | jq '.memories | length' 2>/dev/null || echo "0")
+
+cat <<EOF
+{"systemMessage": "Recalled $COUNT memories", "hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "$RESULT"}}
+EOF
+```
+
+### Save working memory before compaction (PreCompact)
+
+```bash
+#!/bin/bash
+# Snapshot working memory before context gets compressed
+curl -s "https://memento-api.myrakrusemark.workers.dev/v1/working-memory" \
+  -H "Authorization: Bearer $MEMENTO_API_KEY" \
+  -H "X-Memento-Workspace: $MEMENTO_WORKSPACE" > /dev/null
+echo "Working memory preserved"
+```
+
+Register hooks in `.claude/settings.json` under the appropriate event keys.
+
+---
+
+## Dashboard
+
+Browse and manage memories visually at [hifathom.com/dashboard](https://hifathom.com/dashboard).
+
+Paste your API key and workspace name to connect. The dashboard shows all memories, working memory items, skip list entries, and identity crystals — with search, filtering, and direct editing.
+
+---
+
+## Tools
+
+### Core
+
+| Tool | Description |
+|------|-------------|
+| `memento_init` | Initialize a new workspace (once per project) |
+| `memento_health` | Workspace health — memory counts, staleness, skip list stats |
+
+### Memories
+
+| Tool | Description |
+|------|-------------|
+| `memento_store` | Store a memory (fact, decision, observation, instruction) with tags and optional expiration |
+| `memento_recall` | Search memories by keyword, tag, or type. Hosted mode adds semantic + decay scoring |
+| `memento_consolidate` | Merge overlapping memories into a richer synthesis. Originals deactivated, never deleted |
+
+### Working Memory (Structured Items)
+
+| Tool | Description |
+|------|-------------|
+| `memento_item_create` | Create a structured item (active_work, standing_decision, skip_list, waiting_for, session_note) |
+| `memento_item_update` | Partial update — change status, next_action, priority, tags, category |
+| `memento_item_delete` | Permanently delete an item (prefer archiving via status change) |
+| `memento_item_list` | List items with optional category/status/query filters |
+
+### Working Memory (Legacy Markdown)
+
+| Tool | Description |
+|------|-------------|
+| `memento_read` | Read the full working memory markdown or a specific section |
+| `memento_update` | Update a section of the working memory markdown |
+
+### Skip List
+
+| Tool | Description |
+|------|-------------|
+| `memento_skip_add` | Add a skip entry with reason and expiration |
+| `memento_skip_check` | Check if something is on the skip list (auto-purges expired entries) |
+
+### Identity
+
+| Tool | Description |
+|------|-------------|
+| `memento_identity` | Read the current identity crystal — first-person prose of who you are across sessions |
+| `memento_identity_update` | Write or replace the identity crystal. History is preserved as snapshots |
+
+---
 
 ## SaaS API Reference
 
@@ -264,7 +268,17 @@ All endpoints are under `/v1/`. Responses use MCP tool output format:
 
 ### Authentication
 
-Every `/v1/` request requires:
+**Sign up**
+
+```bash
+curl -X POST https://memento-api.myrakrusemark.workers.dev/v1/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{"email": "you@example.com", "workspace": "my-project"}'
+```
+
+Returns `api_key`, `workspace`, `user_id`, `api_url`, `plan`, and `limits`.
+
+Every subsequent `/v1/` request requires:
 
 ```
 Authorization: Bearer mp_live_your_key_here
@@ -360,8 +374,6 @@ curl https://API_URL/v1/working-memory \
   -H "Authorization: Bearer $KEY" \
   -H "X-Memento-Workspace: my-project"
 ```
-
-Returns the full working memory as a markdown document.
 
 **Read a specific section**
 
@@ -459,6 +471,8 @@ curl https://API_URL/v1/health \
 
 Returns working memory stats, memory counts (active/expired/consolidated), skip list stats, and access log totals.
 
+---
+
 ## What This Is Not
 
 The local reference server is deliberately simple. It provides the protocol — the structure and tools for agent memory — without the sophistication of a full memory system. In local mode, recall uses keyword matching, there's no scoring or decay, and workspaces are single-agent.
@@ -472,6 +486,45 @@ The **hosted mode** adds what the reference implementation leaves out:
 - **Full REST API** — every operation available as an HTTP endpoint
 
 The local mode proves the protocol works. The hosted mode makes it production-ready.
+
+---
+
+## Storage Layout (Local Mode)
+
+```
+.memento/
+├── working-memory.md    # The core document — read every session
+├── memories/            # One JSON file per stored memory
+│   ├── a1b2c3d4.json
+│   └── e5f6g7h8.json
+└── skip-index.json      # Queryable skip list entries
+```
+
+Working memory is a single markdown file. Memories are individual JSON files (easy to inspect, easy to back up). The skip list index is a JSON array for fast lookups.
+
+### Adding to `.gitignore`
+
+You'll probably want to track working memory but not individual memory files:
+
+```gitignore
+.memento/memories/
+.memento/skip-index.json
+```
+
+Or ignore the whole thing if memory is per-machine:
+
+```gitignore
+.memento/
+```
+
+## Development
+
+```bash
+npm test              # Run unit + integration tests
+npm run lint          # Lint with ESLint
+npm run format:check  # Check formatting with Prettier
+npm run test:smoke    # Quick smoke test of all tools
+```
 
 ## License
 
