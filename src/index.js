@@ -189,7 +189,9 @@ const server = new McpServer({
 
 server.tool(
   "memento_init",
-  "Initialize a new Memento workspace with working memory template and storage directories",
+  `Initialize a new Memento workspace. Only needed once per project — creates the working memory structure and storage directories.
+
+After initializing, run memento_health to verify, then start creating items with memento_item_create.`,
   {
     path: z.string().optional().describe("Workspace path (default: .memento/ in cwd)"),
   },
@@ -236,7 +238,9 @@ server.tool(
 
 server.tool(
   "memento_read",
-  "Read working memory — the full document or a specific section",
+  `Read the working memory document — the full markdown or a specific section. This is the legacy markdown-based working memory; for structured data, prefer memento_item_list.
+
+Sections: active_work, standing_decisions, skip_list, session_notes.`,
   {
     section: z
       .string()
@@ -267,7 +271,9 @@ server.tool(
 
 server.tool(
   "memento_update",
-  "Update a section of working memory (active_work, standing_decisions, skip_list, session_notes)",
+  `Update a section of the working memory markdown document. For structured items, prefer memento_item_update instead.
+
+Sections: active_work, standing_decisions, skip_list, session_notes.`,
   {
     section: z
       .string()
@@ -313,7 +319,14 @@ server.tool(
 
 server.tool(
   "memento_store",
-  "Store a discrete memory (fact, decision, observation, instruction) with tags and optional expiration",
+  `Store a discrete memory — a fact, decision, observation, or instruction — with tags and optional expiration.
+
+IMPORTANT: Write memories as instructions, not logs.
+- GOOD: "Skip aurora checks until Kp > 4 or Feb 20."
+- BAD: "Checked aurora, Kp was 2.3, quiet."
+The test: could a future agent, with zero context, read this memory and know exactly what to do?
+
+Use tags generously — they power recall. Set expiration for time-sensitive facts.`,
   {
     content: z.string().describe("The memory content"),
     tags: z.array(z.string()).optional().describe("Tags for categorization"),
@@ -360,7 +373,9 @@ server.tool(
 
 server.tool(
   "memento_recall",
-  "Search stored memories by keyword, tag, or type",
+  `Search stored memories by keyword, tag, or type. Use this before starting work on any topic — someone may have already figured it out.
+
+Results are ranked by relevance (keyword match + recency + access frequency). Each recall increments the memory's access count, reinforcing important memories and letting unused ones decay naturally.`,
   {
     query: z.string().describe("Search query (matched against memory content)"),
     tags: z.array(z.string()).optional().describe("Filter by tags (matches any)"),
@@ -413,7 +428,11 @@ server.tool(
 
 server.tool(
   "memento_skip_add",
-  "Add an item to the skip list — things to NOT do right now, with expiration",
+  `Add an item to the skip list — anti-memory. Things to NOT investigate, NOT re-read, NOT act on right now.
+
+Every skip MUST have an expiration. Skips are temporary by design — conditions change. If something should be permanently ignored, archive or delete it instead.
+
+Examples: "Skip aurora until Kp > 4" (expires in 3 days), "Skip HN post about X" (expires tomorrow).`,
   {
     item: z.string().describe("What to skip"),
     reason: z.string().describe("Why it should be skipped"),
@@ -456,7 +475,9 @@ server.tool(
 
 server.tool(
   "memento_skip_check",
-  "Check if a topic/action is on the skip list. Auto-clears expired entries.",
+  `Check if a topic is on the skip list before investigating it. Auto-clears expired entries.
+
+Use this before routine checks (news, weather, HN stories) to avoid re-reading things you've already covered. If the skip list says stop, stop — trust past-you's judgment.`,
   {
     query: z.string().describe("What to check against the skip list"),
     path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
@@ -503,7 +524,9 @@ server.tool(
 
 server.tool(
   "memento_health",
-  "Report memory system health — stats, staleness, expired entries",
+  `Report memory system health. Run this FIRST at the start of every session — it tells you how many items, memories, and skip entries exist, and when things were last updated.
+
+Boot sequence: (1) memento_health → (2) memento_item_list for active_work and skip_list → (3) memento_recall for the current task. Then start working.`,
   {
     path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
@@ -538,7 +561,14 @@ server.tool(
 
 server.tool(
   "memento_item_create",
-  "Create a structured working memory item (active_work, standing_decision, skip_list, waiting_for, session_note)",
+  `Create a structured working memory item. Categories:
+- active_work: Current projects and tasks with next actions
+- standing_decision: Permanent rules and policies (e.g., "all code changes via agents")
+- skip_list: Things to NOT do right now (use memento_skip_add for time-expiring skips)
+- waiting_for: Blocked items awaiting external input
+- session_note: Ephemeral notes for the current session only
+
+Always include tags — they power search. Use next_action to tell future-you exactly what to do next. Priority is 0-10 (higher = more important).`,
   {
     category: z
       .enum(["active_work", "standing_decision", "skip_list", "waiting_for", "session_note"])
@@ -588,7 +618,12 @@ server.tool(
 
 server.tool(
   "memento_item_update",
-  "Update a working memory item (partial update — only provided fields change)",
+  `Update a working memory item — partial update, only provided fields change. Use this to track progress:
+- Update next_action when you make progress ("Last: checked Feb 16. Next: tomorrow.")
+- Change status: active → paused (deprioritized), completed (done), archived (no longer relevant)
+- Move between categories if an item's nature changes
+
+When updating next_action, include what was done AND what comes next — this is how future-you avoids repeating work.`,
   {
     id: z.string().describe("Item ID to update"),
     title: z.string().optional().describe("New title"),
@@ -640,7 +675,7 @@ server.tool(
 
 server.tool(
   "memento_item_delete",
-  "Delete a working memory item",
+  `Permanently delete a working memory item. Prefer archiving (status: archived) over deletion — archived items are hidden from default views but preserved for history. Only delete items created in error or containing incorrect information.`,
   {
     id: z.string().describe("Item ID to delete"),
     path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
@@ -665,7 +700,12 @@ server.tool(
 
 server.tool(
   "memento_item_list",
-  "List working memory items with optional filters",
+  `List working memory items with optional filters. Use this to orient yourself at the start of a session:
+- No filters: see everything active
+- category=skip_list: check what to avoid before routine work
+- category=active_work: see current projects and their next actions
+- category=standing_decision: review permanent rules and policies
+- status=completed: see what's been finished recently`,
   {
     category: z
       .enum(["active_work", "standing_decision", "skip_list", "waiting_for", "session_note"])
