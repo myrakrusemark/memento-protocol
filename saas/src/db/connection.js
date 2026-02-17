@@ -125,7 +125,8 @@ CREATE TABLE IF NOT EXISTS memories (
   access_count INTEGER DEFAULT 0,
   last_accessed_at TEXT,
   consolidated INTEGER DEFAULT 0,
-  consolidated_into TEXT
+  consolidated_into TEXT,
+  linkages TEXT DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS skip_list (
@@ -191,6 +192,26 @@ export async function initSchema(db, schemaType = "all") {
 
   for (const sql of statements) {
     await db.execute(sql);
+  }
+
+  // Migrations — safe to re-run (ADD COLUMN is a no-op if column exists)
+  if (schemaType === "workspace" || schemaType === "all") {
+    await runMigrations(db);
+  }
+}
+
+async function runMigrations(db) {
+  const migrations = [
+    `ALTER TABLE memories ADD COLUMN linkages TEXT DEFAULT '[]'`,
+  ];
+  for (const sql of migrations) {
+    try {
+      await db.execute(sql);
+    } catch (err) {
+      // "duplicate column name" means migration already applied — skip
+      if (err.message && err.message.includes("duplicate column")) continue;
+      throw err;
+    }
   }
 }
 

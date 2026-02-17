@@ -99,13 +99,10 @@ export class HostedStorageAdapter extends StorageInterface {
     return { _raw: true, text, isError: false };
   }
 
-  async storeMemory(_wsPath, { content, tags, type, expires }) {
-    const { text, isError } = await this._fetch("POST", "/v1/memories", {
-      content,
-      tags,
-      type,
-      expires,
-    });
+  async storeMemory(_wsPath, { content, tags, type, expires, linkages }) {
+    const body = { content, tags, type, expires };
+    if (linkages) body.linkages = linkages;
+    const { text, isError } = await this._fetch("POST", "/v1/memories", body);
     if (isError) return { error: text };
     return { _raw: true, text, isError: false };
   }

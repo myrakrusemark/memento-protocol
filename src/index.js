@@ -335,11 +335,22 @@ Use tags generously — they power recall. Set expiration for time-sensitive fac
       .optional()
       .describe("Memory type (default: observation)"),
     expires: z.string().optional().describe("ISO date string when this memory expires"),
+    linkages: z
+      .array(
+        z.object({
+          type: z.enum(["memory", "item", "file"]).describe("Link target type"),
+          id: z.string().optional().describe("Target memory or item ID (required for memory/item)"),
+          path: z.string().optional().describe("Vault file path (required for file)"),
+          label: z.string().optional().describe("Relationship label (e.g. 'source', 'related')"),
+        })
+      )
+      .optional()
+      .describe("Links to other memories, items, or vault files"),
     path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
-  async ({ content, tags, type, expires, path: customPath }) => {
+  async ({ content, tags, type, expires, linkages, path: customPath }) => {
     const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.storeMemory(ws, { content, tags, type, expires });
+    const result = await storage.storeMemory(ws, { content, tags, type, expires, linkages });
 
     // Passthrough for hosted adapter
     if (result._raw) {

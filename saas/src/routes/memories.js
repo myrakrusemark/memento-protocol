@@ -24,6 +24,36 @@ function safeParseTags(tagsStr) {
   }
 }
 
+function safeParseJson(str, fallback = []) {
+  try {
+    return JSON.parse(str || JSON.stringify(fallback));
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Validate and filter linkage entries. Silently drops invalid ones.
+ * Valid: { type: "memory"|"item", id: string } or { type: "file", path: string }
+ * Optional: label (string)
+ */
+function validateLinkages(linkages) {
+  if (!Array.isArray(linkages)) return [];
+  return linkages.filter((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    if (!["memory", "item", "file"].includes(entry.type)) return false;
+    if ((entry.type === "memory" || entry.type === "item") && typeof entry.id !== "string") return false;
+    if (entry.type === "file" && typeof entry.path !== "string") return false;
+    return true;
+  }).map((entry) => {
+    const clean = { type: entry.type };
+    if (entry.type === "file") clean.path = entry.path;
+    else clean.id = entry.id;
+    if (typeof entry.label === "string") clean.label = entry.label;
+    return clean;
+  });
+}
+
 // POST /v1/memories — Store a memory
 memories.post("/", async (c) => {
   const db = c.get("workspaceDb");
@@ -41,11 +71,12 @@ memories.post("/", async (c) => {
   const type = body.type || "observation";
   const tags = JSON.stringify(body.tags || []);
   const expiresAt = body.expires || null;
+  const linkages = JSON.stringify(validateLinkages(body.linkages || []));
 
   await db.execute({
-    sql: `INSERT INTO memories (id, content, type, tags, expires_at)
-          VALUES (?, ?, ?, ?, ?)`,
-    args: [id, content, type, tags, expiresAt],
+    sql: `INSERT INTO memories (id, content, type, tags, expires_at, linkages)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+    args: [id, content, type, tags, expiresAt, linkages],
   });
 
   const tagList = body.tags && body.tags.length ? ` [${body.tags.join(", ")}]` : "";
@@ -122,7 +153,7 @@ memories.get("/", async (c) => {
   // Fetch page
   const result = await db.execute({
     sql: `SELECT id, content, type, tags, created_at, expires_at, relevance,
-                 access_count, last_accessed_at, consolidated, consolidated_into
+                 access_count, last_accessed_at, consolidated, consolidated_into, linkages
           FROM memories ${whereStr}
           ORDER BY ${sortCol} ${sortOrder}
           LIMIT ? OFFSET ?`,
@@ -132,6 +163,7 @@ memories.get("/", async (c) => {
   const memories = result.rows.map((row) => ({
     ...row,
     tags: safeParseTags(row.tags),
+    linkages: safeParseJson(row.linkages, []),
   }));
 
   return c.json({ memories, total, offset, limit });
@@ -160,7 +192,7 @@ memories.get("/recall", async (c) => {
   // without FTS extension, so we do keyword scoring in JS like the reference server)
   const result = await db.execute({
     sql: `SELECT id, content, type, tags, created_at, expires_at,
-                 access_count, last_accessed_at
+                 access_count, last_accessed_at, linkages
           FROM memories
           WHERE consolidated = 0
             AND (expires_at IS NULL OR expires_at > ?)
@@ -220,7 +252,15 @@ memories.get("/recall", async (c) => {
       }
       const tagStr = memTags.length ? ` [${memTags.join(", ")}]` : "";
       const expStr = m.expires_at ? ` (expires: ${m.expires_at})` : "";
-      return `**${m.id}** (${m.type})${tagStr}${expStr}\n${m.content}`;
+      const memLinkages = safeParseJson(m.linkages, []);
+      const linkStr = memLinkages.length
+        ? `\nLinks: ${memLinkages.map((l) => {
+            const ref = l.type === "file" ? l.path : l.id;
+            const lbl = l.label ? ` (${l.label})` : "";
+            return `${l.type}:${ref}${lbl}`;
+          }).join(", ")}`
+        : "";
+      return `**${m.id}** (${m.type})${tagStr}${expStr}\n${m.content}${linkStr}`;
     })
     .join("\n\n---\n\n");
 
@@ -287,7 +327,7 @@ memories.get("/:id", async (c) => {
 
   const result = await db.execute({
     sql: `SELECT id, content, type, tags, created_at, expires_at, relevance,
-                 access_count, last_accessed_at, consolidated, consolidated_into
+                 access_count, last_accessed_at, consolidated, consolidated_into, linkages
           FROM memories WHERE id = ?`,
     args: [memoryId],
   });
@@ -297,7 +337,7 @@ memories.get("/:id", async (c) => {
   }
 
   const row = result.rows[0];
-  return c.json({ ...row, tags: safeParseTags(row.tags) });
+  return c.json({ ...row, tags: safeParseTags(row.tags), linkages: safeParseJson(row.linkages, []) });
 });
 
 // PUT /v1/memories/:id — Update memory (partial)
@@ -334,6 +374,10 @@ memories.put("/:id", async (c) => {
     updates.push("expires_at = ?");
     args.push(body.expires);
   }
+  if (body.linkages !== undefined) {
+    updates.push("linkages = ?");
+    args.push(JSON.stringify(validateLinkages(body.linkages)));
+  }
 
   if (updates.length === 0) {
     return c.json({ error: "No fields to update." }, 400);
@@ -348,13 +392,13 @@ memories.put("/:id", async (c) => {
   // Return updated
   const result = await db.execute({
     sql: `SELECT id, content, type, tags, created_at, expires_at, relevance,
-                 access_count, last_accessed_at, consolidated, consolidated_into
+                 access_count, last_accessed_at, consolidated, consolidated_into, linkages
           FROM memories WHERE id = ?`,
     args: [memoryId],
   });
 
   const row = result.rows[0];
-  return c.json({ ...row, tags: safeParseTags(row.tags) });
+  return c.json({ ...row, tags: safeParseTags(row.tags), linkages: safeParseJson(row.linkages, []) });
 });
 
 // DELETE /v1/memories/:id — Delete a memory
