@@ -46,15 +46,37 @@ if [ ${#TRANSCRIPT_TEXT} -lt 200 ]; then
     exit 0  # Too short to distill anything useful
 fi
 
-# Send to Memento SaaS /v1/distill (background, non-blocking)
-(
-    curl -s --max-time 30 \
-        -X POST \
-        -H "Authorization: Bearer $MEMENTO_KEY" \
-        -H "X-Memento-Workspace: $MEMENTO_WS" \
-        -H "Content-Type: application/json" \
-        -d "{\"transcript\": $(echo "$TRANSCRIPT_TEXT" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}" \
-        "$MEMENTO_API/v1/distill" >/dev/null 2>&1
-) &
+# Send to Memento SaaS /v1/distill
+RESPONSE=$(curl -s --max-time 30 \
+    -X POST \
+    -H "Authorization: Bearer $MEMENTO_KEY" \
+    -H "X-Memento-Workspace: $MEMENTO_WS" \
+    -H "Content-Type: application/json" \
+    -d "{\"transcript\": $(echo "$TRANSCRIPT_TEXT" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}" \
+    "$MEMENTO_API/v1/distill" 2>/dev/null)
+
+# Report results
+MEMORY_COUNT=$(echo "$RESPONSE" | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    print(len(data.get('memories', [])))
+except Exception:
+    print('0')
+" 2>/dev/null)
+
+if [ "$MEMORY_COUNT" -gt 0 ] 2>/dev/null; then
+    python3 -c "
+import json, sys
+msg = sys.argv[1]
+print(json.dumps({'systemMessage': msg}))
+" "Memento Distill: extracted ${MEMORY_COUNT} memories"
+else
+    python3 -c "
+import json, sys
+msg = sys.argv[1]
+print(json.dumps({'systemMessage': msg}))
+" "Memento Distill: no memories extracted"
+fi
 
 exit 0
