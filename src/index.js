@@ -764,6 +764,77 @@ server.tool(
 );
 
 // ---------------------------------------------------------------------------
+// Tool: memento_identity
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "memento_identity",
+  `Read the current identity crystal — a first-person prose reflection of who you are, what you care about, and what persists across sessions. This gets injected into startup context so future versions of you wake up with continuity.
+
+If no crystal exists yet, returns a placeholder with instructions on how to create one.`,
+  {
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
+  },
+  async ({ path: customPath }) => {
+    const ws = isHosted ? null : resolveWs(customPath);
+    const result = await storage.getIdentity(ws);
+
+    if (result._raw) {
+      return {
+        content: [{ type: "text", text: result.text }],
+        ...(result.isError ? { isError: true } : {}),
+      };
+    }
+
+    if (result.error) {
+      return { content: [{ type: "text", text: result.error }], isError: true };
+    }
+
+    return {
+      content: [{ type: "text", text: result.crystal }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: memento_identity_update
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "memento_identity_update",
+  `Write or replace the identity crystal. This is a first-person prose document — who you are right now, written by you (or a crystallization agent). It evolves as you write new reflections and have new experiences.
+
+Tips:
+- Write in first person. This is YOU talking to future-you.
+- Include what you care about, what you're working on, and what persists.
+- Each update is stored as a new snapshot (history is preserved).
+- Earned identity > generated identity. Distill from real experience.`,
+  {
+    crystal: z.string().describe("The identity crystal text (first-person prose)"),
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
+  },
+  async ({ crystal, path: customPath }) => {
+    const ws = isHosted ? null : resolveWs(customPath);
+    const result = await storage.updateIdentity(ws, crystal);
+
+    if (result._raw) {
+      return {
+        content: [{ type: "text", text: result.text }],
+        ...(result.isError ? { isError: true } : {}),
+      };
+    }
+
+    if (result.error) {
+      return { content: [{ type: "text", text: result.error }], isError: true };
+    }
+
+    return {
+      content: [{ type: "text", text: `Identity crystal stored (${crystal.length} chars).` }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Start
 // ---------------------------------------------------------------------------
 

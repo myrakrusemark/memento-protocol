@@ -182,4 +182,16 @@ export class HostedStorageAdapter extends StorageInterface {
     if (res.error) return { error: res.error };
     return res;
   }
+
+  async getIdentity(_wsPath) {
+    const { text, isError } = await this._fetch("GET", "/v1/identity");
+    if (isError) return { error: text };
+    return { _raw: true, text, isError: false };
+  }
+
+  async updateIdentity(_wsPath, crystal) {
+    const { text, isError } = await this._fetch("PUT", "/v1/identity", { crystal });
+    if (isError) return { error: text };
+    return { _raw: true, text, isError: false };
+  }
 }
