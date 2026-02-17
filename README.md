@@ -50,15 +50,17 @@ You should see all tools listed and "All smoke tests passed." This confirms the 
 ```bash
 curl -X POST https://memento-api.myrakrusemark.workers.dev/v1/auth/signup \
   -H "Content-Type: application/json" \
-  -d '{"email": "you@example.com", "workspace": "my-project"}'
+  -d '{"workspace": "my-project"}'
 ```
+
+No email, no password, no OAuth. One curl, one key.
 
 Response:
 
 ```json
 {
   "api_key": "mp_live_abc123...",
-  "workspace": "default",
+  "workspace": "my-project",
   "user_id": "a1b2c3d4",
   "api_url": "https://memento-api.myrakrusemark.workers.dev",
   "plan": "free",
@@ -66,7 +68,7 @@ Response:
 }
 ```
 
-Save the `api_key` — you'll need it in the next step.
+Save the `api_key` — you'll need it in the next step. Optionally include `"email"` if you want account recovery later.
 
 ### Step 2: Configure your MCP client
 
@@ -141,41 +143,52 @@ Before session ends:
 
 ---
 
-## Hooks (Optional)
+## Hooks
 
-Hooks automate memory at session boundaries — no manual calls needed.
+Hooks automate memory at session boundaries — the agent doesn't need to remember to recall or save. Two production-ready scripts are included in `scripts/`.
 
-### Auto-recall on every message (UserPromptSubmit)
+### Setup
 
-Create `.claude/hooks/memory-recall.sh`:
-
-```bash
-#!/bin/bash
-# Recall relevant memories before every response
-QUERY="$1"
-RESULT=$(curl -s "https://memento-api.myrakrusemark.workers.dev/v1/memories/recall?query=$(echo "$QUERY" | jq -sRr @uri)&limit=5" \
-  -H "Authorization: Bearer $MEMENTO_API_KEY" \
-  -H "X-Memento-Workspace: $MEMENTO_WORKSPACE")
-
-COUNT=$(echo "$RESULT" | jq '.memories | length' 2>/dev/null || echo "0")
-
-cat <<EOF
-{"systemMessage": "Recalled $COUNT memories", "hookSpecificOutput": {"hookEventName": "UserPromptSubmit", "additionalContext": "$RESULT"}}
-EOF
-```
-
-### Save working memory before compaction (PreCompact)
+1. **Create a `.env` file** in the repo root (it's gitignored):
 
 ```bash
-#!/bin/bash
-# Snapshot working memory before context gets compressed
-curl -s "https://memento-api.myrakrusemark.workers.dev/v1/working-memory" \
-  -H "Authorization: Bearer $MEMENTO_API_KEY" \
-  -H "X-Memento-Workspace: $MEMENTO_WORKSPACE" > /dev/null
-echo "Working memory preserved"
+MEMENTO_API_KEY=mp_live_your_key_here
+MEMENTO_API_URL=https://memento-api.myrakrusemark.workers.dev
+MEMENTO_WORKSPACE=my-project
 ```
 
-Register hooks in `.claude/settings.json` under the appropriate event keys.
+2. **Make scripts executable** (they already should be):
+
+```bash
+chmod +x scripts/*.sh
+```
+
+3. **Register in Claude Code** — add to `.claude/settings.json` (project-level) or `~/.claude/settings.json` (global):
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "command": "/path/to/memento-protocol/scripts/memento-memory-recall.sh",
+        "timeout": 5000
+      }
+    ],
+    "PreCompact": [
+      {
+        "command": "/path/to/memento-protocol/scripts/memento-precompact-distill.sh",
+        "timeout": 30000
+      }
+    ]
+  }
+}
+```
+
+### What the hooks do
+
+**`memento-memory-recall.sh`** (UserPromptSubmit) — Before every agent response, calls `/v1/context` with the user's message. Returns relevant memories and skip list warnings as context the model sees but the user doesn't. The user sees "Recalled N memories" in their terminal.
+
+**`memento-precompact-distill.sh`** (PreCompact) — Before Claude Code compresses the conversation, sends the full transcript to `/v1/distill`. The API extracts key memories, decisions, and observations — so nothing important is lost to compaction.
 
 ---
 
@@ -201,7 +214,7 @@ Paste your API key and workspace name to connect. The dashboard shows all memori
 | Tool | Description |
 |------|-------------|
 | `memento_store` | Store a memory (fact, decision, observation, instruction) with tags and optional expiration |
-| `memento_recall` | Search memories by keyword, tag, or type. Hosted mode adds semantic + decay scoring |
+| `memento_recall` | Search memories by keyword, tag, or type — includes semantic + decay scoring |
 | `memento_consolidate` | Merge overlapping memories into a richer synthesis. Originals deactivated, never deleted |
 
 ### Working Memory (Structured Items)
@@ -251,8 +264,10 @@ All endpoints are under `/v1/`. Responses use MCP tool output format:
 ```bash
 curl -X POST https://memento-api.myrakrusemark.workers.dev/v1/auth/signup \
   -H "Content-Type: application/json" \
-  -d '{"email": "you@example.com", "workspace": "my-project"}'
+  -d '{"workspace": "my-project"}'
 ```
+
+No email required. Optionally include `"email"` for account recovery.
 
 Returns `api_key`, `workspace`, `user_id`, `api_url`, `plan`, and `limits`.
 
