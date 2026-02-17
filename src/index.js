@@ -3,176 +3,35 @@
 /**
  * Memento Protocol -- Reference MCP Server
  *
- * Persistent memory for AI agents. File-based, zero external dependencies
- * beyond the MCP SDK. Designed for Claude Code but works with any
- * MCP-compatible client.
- *
- * Storage layout:
- *   .memento/
- *   ├── working-memory.md    -- The core document. Read every session.
- *   ├── memories/            -- Discrete stored memories (JSON per entry)
- *   └── skip-index.json      -- Queryable skip list index
+ * Persistent memory for AI agents. Connects to the Memento SaaS API
+ * for all storage operations.
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { LocalStorageAdapter } from "./storage/local.js";
 import { HostedStorageAdapter } from "./storage/hosted.js";
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // ---------------------------------------------------------------------------
-// Storage adapter — switches based on environment variables
+// Require API credentials
 // ---------------------------------------------------------------------------
 
-let storage;
-if (process.env.MEMENTO_API_KEY) {
-  storage = new HostedStorageAdapter({
-    apiKey: process.env.MEMENTO_API_KEY,
-    apiUrl: process.env.MEMENTO_API_URL || "http://localhost:3001",
-    workspace: process.env.MEMENTO_WORKSPACE || "default",
-  });
-} else {
-  storage = new LocalStorageAdapter();
-}
-
-/** Whether we're running in hosted mode (API key is set). */
-const isHosted = !!process.env.MEMENTO_API_KEY;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Resolve the memento workspace path. */
-function workspacePath(customPath) {
-  return path.resolve(customPath || path.join(process.cwd(), ".memento"));
-}
-
-/** Read a file, return null if missing. Throws on non-ENOENT errors. */
-function readFileSafe(filePath) {
-  try {
-    return fs.readFileSync(filePath, "utf-8");
-  } catch (err) {
-    if (err.code === "ENOENT") return null;
-    throw err;
-  }
-}
-
-/** Ensure a directory exists. */
-function ensureDir(dirPath) {
-  fs.mkdirSync(dirPath, { recursive: true });
-}
-
-/** Read the skip index. Returns an array of skip entries. */
-function readSkipIndex(ws) {
-  const raw = readFileSafe(path.join(ws, "skip-index.json"));
-  if (!raw) return [];
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
-/** Write the skip index. */
-function writeSkipIndex(ws, entries) {
-  fs.writeFileSync(path.join(ws, "skip-index.json"), JSON.stringify(entries, null, 2), "utf-8");
-}
-
-/** Purge expired skip entries. Returns cleaned list. */
-function purgeExpiredSkips(entries) {
-  const now = new Date();
-  return entries.filter((e) => new Date(e.expires) > now);
-}
-
-/**
- * Extract a named section from the working memory markdown.
- * Sections are delimited by `## Section Name` headings.
- * Returns the content between the heading and the next `---` or `##`.
- */
-function extractSection(markdown, sectionName) {
-  const pattern = new RegExp(
-    `^## ${escapeRegex(sectionName)}\\s*\\n([\\s\\S]*?)(?=\\n---\\s*\\n|\\n## |(?![\\s\\S]))`,
-    "m"
+if (!process.env.MEMENTO_API_KEY || !process.env.MEMENTO_API_URL) {
+  console.error(
+    'Error: MEMENTO_API_KEY is required. Sign up: curl -X POST https://memento-api.myrakrusemark.workers.dev/v1/auth/signup -H \'Content-Type: application/json\' -d \'{"email": "you@example.com"}\''
   );
-  const match = markdown.match(pattern);
-  return match ? match[1].trim() : null;
+  process.exit(1);
 }
 
-/**
- * Replace a named section's content in the working memory markdown.
- */
-function replaceSection(markdown, sectionName, newContent) {
-  const pattern = new RegExp(
-    `(^## ${escapeRegex(sectionName)}\\s*\\n)([\\s\\S]*?)(?=\\n---\\s*\\n|\\n## |(?![\\s\\S]))`,
-    "m"
-  );
-  const match = markdown.match(pattern);
-  if (!match) {
-    // Section not found -- append it
-    return markdown.trimEnd() + `\n\n---\n\n## ${sectionName}\n\n${newContent}\n`;
-  }
-  return markdown.replace(pattern, `$1\n${newContent}\n`);
-}
-
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/**
- * Check if all words in `query` appear somewhere in `text`.
- * Case-insensitive. Used for skip-check matching.
- */
-function matchesAllWords(query, text) {
-  const queryWords = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (queryWords.length === 0) return false;
-  const textLower = text.toLowerCase();
-  return queryWords.every((word) => textLower.includes(word));
-}
-
-/** Map section shorthand names to actual heading text. */
-const SECTION_MAP = {
-  active_work: "Active Work",
-  standing_decisions: "Standing Decisions",
-  skip_list: "Skip List",
-  session_notes: "Session Notes",
-};
-
-function resolveSectionName(key) {
-  return SECTION_MAP[key] || key;
-}
-
-// ---------------------------------------------------------------------------
-// Auto-detect workspace
-// ---------------------------------------------------------------------------
-
-/**
- * Walk up from cwd looking for an existing .memento/ directory.
- * Falls back to cwd/.memento if none found.
- */
-function detectWorkspace() {
-  let dir = process.cwd();
-  while (true) {
-    const candidate = path.join(dir, ".memento");
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
-      return candidate;
-    }
-    const parent = path.dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return path.join(process.cwd(), ".memento");
-}
-
-/** Resolve workspace path from tool arguments. */
-function resolveWs(customPath) {
-  return customPath ? workspacePath(customPath) : detectWorkspace();
-}
+const storage = new HostedStorageAdapter({
+  apiKey: process.env.MEMENTO_API_KEY,
+  apiUrl: process.env.MEMENTO_API_URL,
+  workspace: process.env.MEMENTO_WORKSPACE || "default",
+});
 
 // ---------------------------------------------------------------------------
 // Server
@@ -192,12 +51,9 @@ server.tool(
   `Initialize a new Memento workspace. Only needed once per project — creates the working memory structure and storage directories.
 
 After initializing, run memento_health to verify, then start creating items with memento_item_create.`,
-  {
-    path: z.string().optional().describe("Workspace path (default: .memento/ in cwd)"),
-  },
-  async ({ path: customPath }) => {
-    const ws = isHosted ? null : workspacePath(customPath);
-    const result = await storage.initWorkspace(ws);
+  {},
+  async () => {
+    const result = await storage.initWorkspace(null);
 
     if (result.error) {
       return {
@@ -207,25 +63,21 @@ After initializing, run memento_health to verify, then start creating items with
     }
 
     if (result.alreadyExists) {
-      const location = isHosted ? "(hosted)" : ws;
       return {
         content: [
           {
             type: "text",
-            text: `Workspace already exists at ${location}. Use memento_read to load it.`,
+            text: `Workspace already exists (hosted). Use memento_read to load it.`,
           },
         ],
       };
     }
 
-    const location = isHosted ? "(hosted)" : ws;
     return {
       content: [
         {
           type: "text",
-          text: isHosted
-            ? `Memento workspace initialized at ${location}.\n\nRead working memory at the start of every session.`
-            : `Memento workspace initialized at ${location}\n\nCreated:\n  working-memory.md\n  memories/\n  skip-index.json\n\nRead working-memory.md at the start of every session.`,
+          text: `Memento workspace initialized (hosted).\n\nRead working memory at the start of every session.`,
         },
       ],
     };
@@ -248,11 +100,9 @@ Sections: active_work, standing_decisions, skip_list, session_notes.`,
       .describe(
         "Section to read: active_work, standing_decisions, skip_list, session_notes"
       ),
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
-  async ({ section, path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.readWorkingMemory(ws, section);
+  async ({ section }) => {
+    const result = await storage.readWorkingMemory(null, section);
 
     if (result.error) {
       return {
@@ -281,13 +131,10 @@ Sections: active_work, standing_decisions, skip_list, session_notes.`,
         "Section to update: active_work, standing_decisions, skip_list, session_notes"
       ),
     content: z.string().describe("New content for the section"),
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
-  async ({ section, content, path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.updateWorkingMemory(ws, section, content);
+  async ({ section, content }) => {
+    const result = await storage.updateWorkingMemory(null, section, content);
 
-    // Passthrough for hosted adapter
     if (result._raw) {
       return {
         content: [{ type: "text", text: result.text }],
@@ -346,13 +193,10 @@ Use tags generously — they power recall. Set expiration for time-sensitive fac
       )
       .optional()
       .describe("Links to other memories, items, or vault files"),
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
-  async ({ content, tags, type, expires, linkages, path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.storeMemory(ws, { content, tags, type, expires, linkages });
+  async ({ content, tags, type, expires, linkages }) => {
+    const result = await storage.storeMemory(null, { content, tags, type, expires, linkages });
 
-    // Passthrough for hosted adapter
     if (result._raw) {
       return {
         content: [{ type: "text", text: result.text }],
@@ -395,13 +239,10 @@ Results are ranked by relevance (keyword match + recency + access frequency). Ea
       .optional()
       .describe("Filter by type: fact, decision, observation, instruction"),
     limit: z.number().optional().describe("Max results (default: 10)"),
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
-  async ({ query, tags, type, limit, path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.recallMemories(ws, { query, tags, type, limit });
+  async ({ query, tags, type, limit }) => {
+    const result = await storage.recallMemories(null, { query, tags, type, limit });
 
-    // Passthrough for hosted adapter
     if (result._raw) {
       return {
         content: [{ type: "text", text: result.text }],
@@ -449,13 +290,10 @@ This is reconsolidation — like how the brain rebuilds memories on recall. Freq
     content: z.string().optional().describe("Your synthesis of the memories (recommended). If omitted, an AI summary is generated."),
     type: z.enum(["fact", "decision", "observation", "instruction"]).optional().describe("Type for the new memory (default: most common type among sources)"),
     tags: z.array(z.string()).optional().describe("Additional tags (merged with source tags)"),
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
-  async ({ source_ids, content, type, tags, path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.consolidateMemories(ws, { source_ids, content, type, tags });
+  async ({ source_ids, content, type, tags }) => {
+    const result = await storage.consolidateMemories(null, { source_ids, content, type, tags });
 
-    // Passthrough for hosted adapter
     if (result._raw) {
       return {
         content: [{ type: "text", text: result.text }],
@@ -491,13 +329,10 @@ Examples: "Skip aurora until Kp > 4" (expires in 3 days), "Skip HN post about X"
     item: z.string().describe("What to skip"),
     reason: z.string().describe("Why it should be skipped"),
     expires: z.string().describe("When this skip expires (ISO date string, e.g. '2026-02-20')"),
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
-  async ({ item, reason, expires, path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.addSkip(ws, { item, reason, expires });
+  async ({ item, reason, expires }) => {
+    const result = await storage.addSkip(null, { item, reason, expires });
 
-    // Passthrough for hosted adapter
     if (result._raw) {
       return {
         content: [{ type: "text", text: result.text }],
@@ -534,13 +369,10 @@ server.tool(
 Use this before routine checks (news, weather, HN stories) to avoid re-reading things you've already covered. If the skip list says stop, stop — trust past-you's judgment.`,
   {
     query: z.string().describe("What to check against the skip list"),
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
-  async ({ query, path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.checkSkip(ws, query);
+  async ({ query }) => {
+    const result = await storage.checkSkip(null, query);
 
-    // Passthrough for hosted adapter
     if (result._raw) {
       return {
         content: [{ type: "text", text: result.text }],
@@ -581,14 +413,10 @@ server.tool(
   `Report memory system health. Run this FIRST at the start of every session — it tells you how many items, memories, and skip entries exist, and when things were last updated.
 
 Boot sequence: (1) memento_health → (2) memento_item_list for active_work and skip_list → (3) memento_recall for the current task. Then start working.`,
-  {
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
-  },
-  async ({ path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.getHealth(ws);
+  {},
+  async () => {
+    const result = await storage.getHealth(null);
 
-    // Passthrough for hosted adapter
     if (result._raw) {
       return {
         content: [{ type: "text", text: result.text }],
@@ -636,11 +464,9 @@ Always include tags — they power search. Use next_action to tell future-you ex
     priority: z.number().optional().describe("Priority (higher = more important, default: 0)"),
     tags: z.array(z.string()).optional().describe("Tags for categorization"),
     next_action: z.string().optional().describe("Next action to take"),
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
-  async ({ category, title, content, status, priority, tags, next_action, path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.createItem(ws, {
+  async ({ category, title, content, status, priority, tags, next_action }) => {
+    const result = await storage.createItem(null, {
       category,
       title,
       content,
@@ -693,10 +519,8 @@ When updating next_action, include what was done AND what comes next — this is
     priority: z.number().optional().describe("New priority"),
     tags: z.array(z.string()).optional().describe("New tags (replaces existing)"),
     next_action: z.string().optional().describe("New next action"),
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
-  async ({ id, title, content, category, status, priority, tags, next_action, path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
+  async ({ id, title, content, category, status, priority, tags, next_action }) => {
     const data = {};
     if (title !== undefined) data.title = title;
     if (content !== undefined) data.content = content;
@@ -706,7 +530,7 @@ When updating next_action, include what was done AND what comes next — this is
     if (tags !== undefined) data.tags = tags;
     if (next_action !== undefined) data.next_action = next_action;
 
-    const result = await storage.updateItem(ws, id, data);
+    const result = await storage.updateItem(null, id, data);
 
     if (result.error) {
       return { content: [{ type: "text", text: result.error }], isError: true };
@@ -732,11 +556,9 @@ server.tool(
   `Permanently delete a working memory item. Prefer archiving (status: archived) over deletion — archived items are hidden from default views but preserved for history. Only delete items created in error or containing incorrect information.`,
   {
     id: z.string().describe("Item ID to delete"),
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
-  async ({ id, path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.deleteItem(ws, id);
+  async ({ id }) => {
+    const result = await storage.deleteItem(null, id);
 
     if (result.error) {
       return { content: [{ type: "text", text: result.error }], isError: true };
@@ -770,11 +592,9 @@ server.tool(
       .optional()
       .describe("Filter by status"),
     query: z.string().optional().describe("Search title and content"),
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
-  async ({ category, status, query, path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.listItems(ws, { category, status, query });
+  async ({ category, status, query }) => {
+    const result = await storage.listItems(null, { category, status, query });
 
     if (result.error) {
       return { content: [{ type: "text", text: result.error }], isError: true };
@@ -815,12 +635,9 @@ server.tool(
   `Read the current identity crystal — a first-person prose reflection of who you are, what you care about, and what persists across sessions. This gets injected into startup context so future versions of you wake up with continuity.
 
 If no crystal exists yet, returns a placeholder with instructions on how to create one.`,
-  {
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
-  },
-  async ({ path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.getIdentity(ws);
+  {},
+  async () => {
+    const result = await storage.getIdentity(null);
 
     if (result._raw) {
       return {
@@ -854,11 +671,9 @@ Tips:
 - Earned identity > generated identity. Distill from real experience.`,
   {
     crystal: z.string().describe("The identity crystal text (first-person prose)"),
-    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
-  async ({ crystal, path: customPath }) => {
-    const ws = isHosted ? null : resolveWs(customPath);
-    const result = await storage.updateIdentity(ws, crystal);
+  async ({ crystal }) => {
+    const result = await storage.updateIdentity(null, crystal);
 
     if (result._raw) {
       return {
@@ -895,23 +710,4 @@ if (isMainModule) {
   });
 }
 
-// Exported for testing
-export {
-  workspacePath,
-  readFileSafe,
-  ensureDir,
-  readSkipIndex,
-  writeSkipIndex,
-  purgeExpiredSkips,
-  extractSection,
-  replaceSection,
-  escapeRegex,
-  matchesAllWords,
-  detectWorkspace,
-  SECTION_MAP,
-  resolveSectionName,
-  server,
-  main,
-  storage,
-  isHosted,
-};
+export { server, main, storage };
