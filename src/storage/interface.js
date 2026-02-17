@@ -130,6 +130,16 @@ export class StorageInterface {
   }
 
   /**
+   * Consolidate multiple memories into a single richer memory.
+   * @param {string} wsPath - Resolved workspace path
+   * @param {{ source_ids: string[], content?: string, type?: string, tags?: string[] }} params
+   * @returns {Promise<{ _raw?: boolean, text?: string, error?: string }>}
+   */
+  async consolidateMemories(wsPath, { source_ids, content, type, tags }) {
+    throw new Error("Not implemented");
+  }
+
+  /**
    * Get context — everything relevant for a message in one call.
    * @param {string} wsPath - Resolved workspace path
    * @param {string} message - The user's message

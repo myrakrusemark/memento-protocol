@@ -434,6 +434,49 @@ Results are ranked by relevance (keyword match + recency + access frequency). Ea
 );
 
 // ---------------------------------------------------------------------------
+// Tool: memento_consolidate
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "memento_consolidate",
+  `Consolidate multiple overlapping memories into a single, richer memory. Use this when recall returns 3+ memories about the same topic with high overlap.
+
+The new memory replaces the originals in recall results. Originals are deactivated (not deleted) — always traceable, never lost. Provide your own synthesis for best results, or omit content to auto-generate.
+
+This is reconsolidation — like how the brain rebuilds memories on recall. Frequently used topics get consolidated into sharp, dense representations. Unused topics stay scattered and eventually decay.`,
+  {
+    source_ids: z.array(z.string()).min(2).describe("IDs of memories to consolidate (minimum 2)"),
+    content: z.string().optional().describe("Your synthesis of the memories (recommended). If omitted, an AI summary is generated."),
+    type: z.enum(["fact", "decision", "observation", "instruction"]).optional().describe("Type for the new memory (default: most common type among sources)"),
+    tags: z.array(z.string()).optional().describe("Additional tags (merged with source tags)"),
+    path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
+  },
+  async ({ source_ids, content, type, tags, path: customPath }) => {
+    const ws = isHosted ? null : resolveWs(customPath);
+    const result = await storage.consolidateMemories(ws, { source_ids, content, type, tags });
+
+    // Passthrough for hosted adapter
+    if (result._raw) {
+      return {
+        content: [{ type: "text", text: result.text }],
+        ...(result.isError ? { isError: true } : {}),
+      };
+    }
+
+    if (result.error) {
+      return {
+        content: [{ type: "text", text: result.error }],
+        isError: true,
+      };
+    }
+
+    return {
+      content: [{ type: "text", text: result.text || "Consolidation complete." }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Tool: memento_skip_add
 // ---------------------------------------------------------------------------
 

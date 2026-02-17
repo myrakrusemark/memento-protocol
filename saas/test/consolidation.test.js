@@ -121,7 +121,7 @@ describe("generateSummary", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Integration tests — consolidateMemories (database)
+// Integration tests — consolidateMemories (database) — auto-consolidation
 // ---------------------------------------------------------------------------
 
 describe("consolidateMemories", () => {
@@ -291,5 +291,292 @@ describe("POST /v1/consolidate", () => {
     const afterRes = await h.request("GET", "/v1/memories/recall?query=xyzzy+consolidatable");
     const afterBody = await afterRes.json();
     assert.ok(afterBody.content[0].text.includes("No memories found"));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// API integration tests — POST /v1/consolidate/group (agent-driven)
+// ---------------------------------------------------------------------------
+
+describe("POST /v1/consolidate/group", () => {
+  let h;
+
+  beforeEach(async () => {
+    h = await createTestHarness();
+  });
+
+  afterEach(() => {
+    h.cleanup();
+  });
+
+  /** Helper: store a memory and return its ID */
+  async function storeMemory(opts) {
+    const res = await h.request("POST", "/v1/memories", opts);
+    const body = await res.json();
+    return body.content[0].text.match(/Stored memory (\S+)/)[1];
+  }
+
+  it("creates a new memory with agent-provided content", async () => {
+    const id1 = await storeMemory({ content: "API moved to /v2", tags: ["api"], type: "fact" });
+    const id2 = await storeMemory({ content: "API now requires auth", tags: ["api"], type: "fact" });
+    const id3 = await storeMemory({ content: "API rate limit is 100/min", tags: ["api"], type: "fact" });
+
+    const res = await h.request("POST", "/v1/consolidate/group", {
+      source_ids: [id1, id2, id3],
+      content: "API v2 requires auth and has a 100/min rate limit.",
+      type: "fact",
+      tags: ["migration"],
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const text = body.content[0].text;
+    assert.ok(text.includes("Consolidated 3 memories into"));
+
+    // Extract the new memory ID
+    const newId = text.match(/into (\S+)\./)[1];
+
+    // Verify the new memory exists in the memories table
+    const mem = await h.db.execute({ sql: "SELECT * FROM memories WHERE id = ?", args: [newId] });
+    assert.equal(mem.rows.length, 1);
+    assert.equal(mem.rows[0].content, "API v2 requires auth and has a 100/min rate limit.");
+    assert.equal(mem.rows[0].type, "fact");
+    assert.equal(mem.rows[0].consolidated, 0); // The new memory is active, not consolidated
+  });
+
+  it("generates AI/template summary when content is not provided", async () => {
+    const id1 = await storeMemory({ content: "Memory A", tags: ["test"], type: "observation" });
+    const id2 = await storeMemory({ content: "Memory B", tags: ["test"], type: "observation" });
+
+    const res = await h.request("POST", "/v1/consolidate/group", {
+      source_ids: [id1, id2],
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const newId = body.content[0].text.match(/into (\S+)\./)[1];
+
+    // Verify the generated content exists (template fallback since no AI in tests)
+    const mem = await h.db.execute({ sql: "SELECT content FROM memories WHERE id = ?", args: [newId] });
+    assert.equal(mem.rows.length, 1);
+    assert.ok(mem.rows[0].content.length > 0);
+  });
+
+  it("marks source memories as consolidated with consolidated_into pointing to new memory", async () => {
+    const id1 = await storeMemory({ content: "Source 1", tags: ["src"], type: "fact" });
+    const id2 = await storeMemory({ content: "Source 2", tags: ["src"], type: "fact" });
+
+    const res = await h.request("POST", "/v1/consolidate/group", {
+      source_ids: [id1, id2],
+      content: "Combined source",
+    });
+
+    const body = await res.json();
+    const newId = body.content[0].text.match(/into (\S+)\./)[1];
+
+    // Check source memories are marked consolidated
+    const sources = await h.db.execute({
+      sql: "SELECT id, consolidated, consolidated_into FROM memories WHERE id IN (?, ?)",
+      args: [id1, id2],
+    });
+    assert.equal(sources.rows.length, 2);
+    for (const row of sources.rows) {
+      assert.equal(row.consolidated, 1);
+      assert.equal(row.consolidated_into, newId);
+    }
+  });
+
+  it("new memory has correct linkages back to sources", async () => {
+    const id1 = await storeMemory({ content: "Link test 1", tags: ["link"], type: "fact" });
+    const id2 = await storeMemory({ content: "Link test 2", tags: ["link"], type: "fact" });
+
+    const res = await h.request("POST", "/v1/consolidate/group", {
+      source_ids: [id1, id2],
+      content: "Linked result",
+    });
+
+    const body = await res.json();
+    const newId = body.content[0].text.match(/into (\S+)\./)[1];
+
+    const mem = await h.db.execute({ sql: "SELECT linkages FROM memories WHERE id = ?", args: [newId] });
+    const linkages = JSON.parse(mem.rows[0].linkages);
+
+    // Should have consolidated-from linkages to both sources
+    const consolidatedFromLinks = linkages.filter((l) => l.label === "consolidated-from");
+    assert.equal(consolidatedFromLinks.length, 2);
+    const linkedIds = consolidatedFromLinks.map((l) => l.id).sort();
+    assert.deepEqual(linkedIds, [id1, id2].sort());
+  });
+
+  it("consolidated sources do not appear in recall results", async () => {
+    const id1 = await storeMemory({ content: "Unique xyzzy alpha", tags: ["recall-test"], type: "fact" });
+    const id2 = await storeMemory({ content: "Unique xyzzy beta", tags: ["recall-test"], type: "fact" });
+
+    // Verify they appear in recall before consolidation
+    const beforeRes = await h.request("GET", "/v1/memories/recall?query=xyzzy");
+    const beforeBody = await beforeRes.json();
+    assert.ok(beforeBody.content[0].text.includes("Found 2"));
+
+    // Consolidate
+    await h.request("POST", "/v1/consolidate/group", {
+      source_ids: [id1, id2],
+      content: "Unique xyzzy combined result",
+    });
+
+    // After consolidation, only the new memory should appear
+    const afterRes = await h.request("GET", "/v1/memories/recall?query=xyzzy");
+    const afterBody = await afterRes.json();
+    assert.ok(afterBody.content[0].text.includes("Found 1"));
+    assert.ok(afterBody.content[0].text.includes("combined result"));
+  });
+
+  it("inherits summed access_count from sources", async () => {
+    const id1 = await storeMemory({ content: "Access test 1", tags: ["access"], type: "fact" });
+    const id2 = await storeMemory({ content: "Access test 2", tags: ["access"], type: "fact" });
+
+    // Bump access counts
+    await h.db.execute({ sql: "UPDATE memories SET access_count = 5 WHERE id = ?", args: [id1] });
+    await h.db.execute({ sql: "UPDATE memories SET access_count = 3 WHERE id = ?", args: [id2] });
+
+    const res = await h.request("POST", "/v1/consolidate/group", {
+      source_ids: [id1, id2],
+      content: "Access combined",
+    });
+
+    const body = await res.json();
+    const newId = body.content[0].text.match(/into (\S+)\./)[1];
+
+    const mem = await h.db.execute({ sql: "SELECT access_count FROM memories WHERE id = ?", args: [newId] });
+    assert.equal(mem.rows[0].access_count, 8);
+  });
+
+  it("computes tag union with deduplication", async () => {
+    const id1 = await storeMemory({ content: "Tag union 1", tags: ["api", "auth"], type: "fact" });
+    const id2 = await storeMemory({ content: "Tag union 2", tags: ["api", "rate-limit"], type: "fact" });
+
+    const res = await h.request("POST", "/v1/consolidate/group", {
+      source_ids: [id1, id2],
+      content: "Tag union result",
+      tags: ["migration", "api"], // "api" already exists in sources
+    });
+
+    const body = await res.json();
+    const newId = body.content[0].text.match(/into (\S+)\./)[1];
+
+    const mem = await h.db.execute({ sql: "SELECT tags FROM memories WHERE id = ?", args: [newId] });
+    const tags = JSON.parse(mem.rows[0].tags);
+    assert.deepEqual(tags, ["api", "auth", "migration", "rate-limit"]); // sorted, deduplicated
+  });
+
+  it("uses most common type when type is not provided", async () => {
+    const id1 = await storeMemory({ content: "Type test 1", tags: ["t"], type: "fact" });
+    const id2 = await storeMemory({ content: "Type test 2", tags: ["t"], type: "fact" });
+    const id3 = await storeMemory({ content: "Type test 3", tags: ["t"], type: "observation" });
+
+    const res = await h.request("POST", "/v1/consolidate/group", {
+      source_ids: [id1, id2, id3],
+      content: "Type result",
+    });
+
+    const body = await res.json();
+    const newId = body.content[0].text.match(/into (\S+)\./)[1];
+
+    const mem = await h.db.execute({ sql: "SELECT type FROM memories WHERE id = ?", args: [newId] });
+    assert.equal(mem.rows[0].type, "fact"); // 2 facts vs 1 observation
+  });
+
+  it("rejects fewer than 2 source IDs", async () => {
+    const id1 = await storeMemory({ content: "Solo memory", tags: ["solo"], type: "fact" });
+
+    const res = await h.request("POST", "/v1/consolidate/group", {
+      source_ids: [id1],
+    });
+    assert.equal(res.status, 400);
+
+    const body = await res.json();
+    assert.ok(body.content[0].text.includes("at least 2"));
+  });
+
+  it("rejects non-existent IDs", async () => {
+    const id1 = await storeMemory({ content: "Real memory", tags: ["real"], type: "fact" });
+
+    const res = await h.request("POST", "/v1/consolidate/group", {
+      source_ids: [id1, "nonexistent"],
+    });
+    assert.equal(res.status, 400);
+
+    const body = await res.json();
+    assert.ok(body.content[0].text.includes("fewer than 2"));
+    assert.ok(body.content[0].text.includes("nonexistent"));
+  });
+
+  it("rejects already-consolidated IDs", async () => {
+    const id1 = await storeMemory({ content: "First batch A", tags: ["batch"], type: "fact" });
+    const id2 = await storeMemory({ content: "First batch B", tags: ["batch"], type: "fact" });
+    const id3 = await storeMemory({ content: "Second batch", tags: ["batch"], type: "fact" });
+
+    // Consolidate id1 + id2 first
+    await h.request("POST", "/v1/consolidate/group", {
+      source_ids: [id1, id2],
+      content: "First batch combined",
+    });
+
+    // Try to consolidate id1 (now consolidated) + id3
+    const res = await h.request("POST", "/v1/consolidate/group", {
+      source_ids: [id1, id3],
+    });
+    assert.equal(res.status, 400);
+
+    const body = await res.json();
+    assert.ok(body.content[0].text.includes("fewer than 2"));
+  });
+
+  it("accepts legacy 'ids' field for backwards compatibility", async () => {
+    const id1 = await storeMemory({ content: "Legacy A", tags: ["legacy"], type: "fact" });
+    const id2 = await storeMemory({ content: "Legacy B", tags: ["legacy"], type: "fact" });
+
+    const res = await h.request("POST", "/v1/consolidate/group", {
+      ids: [id1, id2], // old field name
+      content: "Legacy combined",
+    });
+    assert.equal(res.status, 200);
+  });
+
+  it("inherits linkages from source memories (deduplicated)", async () => {
+    // Store memories with linkages
+    const id1 = await storeMemory({ content: "With links 1", tags: ["linked"], type: "fact" });
+    const id2 = await storeMemory({ content: "With links 2", tags: ["linked"], type: "fact" });
+
+    // Add linkages to source memories
+    await h.request("PUT", `/v1/memories/${id1}`, {
+      linkages: [{ type: "file", path: "/docs/readme.md", label: "source" }],
+    });
+    await h.request("PUT", `/v1/memories/${id2}`, {
+      linkages: [
+        { type: "file", path: "/docs/readme.md", label: "source" }, // duplicate
+        { type: "memory", id: "other123", label: "related" },
+      ],
+    });
+
+    const res = await h.request("POST", "/v1/consolidate/group", {
+      source_ids: [id1, id2],
+      content: "Inherited links result",
+    });
+
+    const body = await res.json();
+    const newId = body.content[0].text.match(/into (\S+)\./)[1];
+
+    const mem = await h.db.execute({ sql: "SELECT linkages FROM memories WHERE id = ?", args: [newId] });
+    const linkages = JSON.parse(mem.rows[0].linkages);
+
+    // Should have 2 consolidated-from + 1 file (deduplicated) + 1 memory
+    const fromLinks = linkages.filter((l) => l.label === "consolidated-from");
+    const fileLinks = linkages.filter((l) => l.type === "file");
+    const memLinks = linkages.filter((l) => l.type === "memory" && l.label !== "consolidated-from");
+
+    assert.equal(fromLinks.length, 2);
+    assert.equal(fileLinks.length, 1); // deduplicated
+    assert.equal(memLinks.length, 1);
+    assert.equal(memLinks[0].id, "other123");
   });
 });

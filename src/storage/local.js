@@ -337,6 +337,96 @@ export class LocalStorageAdapter extends StorageInterface {
     return { items, total: items.length };
   }
 
+  async consolidateMemories(wsPath, { source_ids, content, type, tags }) {
+    const memoriesDir = path.join(wsPath, "memories");
+    if (!fs.existsSync(memoriesDir)) {
+      return { error: "Memories directory not found. Run memento_init first." };
+    }
+
+    // Read source memory files
+    const sources = [];
+    for (const id of source_ids) {
+      const filePath = path.join(memoriesDir, `${id}.json`);
+      const raw = readFileSafe(filePath);
+      if (!raw) continue;
+      try {
+        const mem = JSON.parse(raw);
+        if (mem.consolidated) continue; // Skip already consolidated
+        sources.push(mem);
+      } catch {
+        // Skip malformed
+      }
+    }
+
+    if (sources.length < 2) {
+      return { error: "Found fewer than 2 active memories from provided IDs." };
+    }
+
+    // Determine content
+    let finalContent = content;
+    if (!finalContent) {
+      const bullets = sources.map((m) => `- ${m.content}`).join("\n");
+      finalContent = `Consolidated ${sources.length} memories:\n${bullets}`;
+    }
+
+    // Determine type
+    let finalType = type;
+    if (!finalType) {
+      const typeCounts = {};
+      for (const m of sources) {
+        typeCounts[m.type] = (typeCounts[m.type] || 0) + 1;
+      }
+      finalType = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0][0];
+    }
+
+    // Compute tag union
+    const allTags = new Set();
+    for (const m of sources) {
+      if (Array.isArray(m.tags)) {
+        for (const t of m.tags) allTags.add(t);
+      }
+    }
+    if (Array.isArray(tags)) {
+      for (const t of tags) allTags.add(t);
+    }
+
+    // Create new consolidated memory
+    const newId = randomUUID().slice(0, 8);
+    const newMemory = {
+      id: newId,
+      content: finalContent,
+      type: finalType,
+      tags: Array.from(allTags).sort(),
+      created: new Date().toISOString(),
+      expires: null,
+      consolidated_from: sources.map((m) => m.id),
+    };
+
+    fs.writeFileSync(
+      path.join(memoriesDir, `${newId}.json`),
+      JSON.stringify(newMemory, null, 2),
+      "utf-8"
+    );
+
+    // Mark sources as consolidated
+    for (const m of sources) {
+      m.consolidated = true;
+      m.consolidated_into = newId;
+      fs.writeFileSync(
+        path.join(memoriesDir, `${m.id}.json`),
+        JSON.stringify(m, null, 2),
+        "utf-8"
+      );
+    }
+
+    const sourceIdList = sources.map((m) => m.id);
+    return {
+      _raw: true,
+      text: `Consolidated ${sources.length} memories into ${newId}. Sources: [${sourceIdList.join(", ")}]`,
+      isError: false,
+    };
+  }
+
   async getContext(wsPath, message) {
     // Local mode: assemble context from files
     const itemsResult = await this.listItems(wsPath, { status: "active" });

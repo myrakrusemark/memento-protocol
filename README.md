@@ -20,6 +20,12 @@ Memory isn't just about what to remember — it's about what to **not do**. The 
 
 "Skip aurora alerts until Kp > 4 or Feb 20" is more useful than checking aurora every cycle and finding nothing.
 
+### Memory Consolidation
+
+When you recall the same topic repeatedly, overlapping memories pile up. Consolidation merges them into a single, richer representation — like how the brain rebuilds memories on recall. The originals become provenance: deactivated but never deleted, always traceable through linkages.
+
+Agent-driven consolidation is preferred over automatic: the agent reads three overlapping memories about an API migration, writes a single sharp synthesis, and consolidates. The new memory inherits all tags, access history, and linkages from the originals. Frequently used topics get consolidated into dense representations. Unused topics stay scattered and eventually decay.
+
 ### The Memory Lifecycle
 
 Memories aren't permanent. They have types (fact, decision, observation, instruction), optional tags for retrieval, and optional expiration dates. Expired memories stop appearing in recall results. Working memory sections get rewritten, not appended to. The goal is a living document, not an ever-growing archive.
@@ -127,6 +133,18 @@ Search stored memories by keyword, tag, or type.
 | `type`    | string   | (none)      | Filter by memory type                |
 | `limit`   | number   | `10`        | Max results                          |
 | `path`    | string   | auto-detect | Workspace location                   |
+
+### `memento_consolidate`
+
+Consolidate multiple overlapping memories into a single, richer memory. Originals are deactivated but never deleted.
+
+| Parameter    | Type     | Default     | Description                                                  |
+| ------------ | -------- | ----------- | ------------------------------------------------------------ |
+| `source_ids` | string[] | (required)  | IDs of memories to consolidate (minimum 2)                   |
+| `content`    | string   | (generated) | Your synthesis (recommended). If omitted, AI/template summary is generated |
+| `type`       | string   | (inferred)  | Type for the new memory (default: most common among sources) |
+| `tags`       | string[] | (none)      | Additional tags (merged with source tags)                    |
+| `path`       | string   | auto-detect | Workspace location                                          |
 
 ### `memento_skip_add`
 

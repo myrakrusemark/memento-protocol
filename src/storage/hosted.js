@@ -177,6 +177,16 @@ export class HostedStorageAdapter extends StorageInterface {
     return res;
   }
 
+  async consolidateMemories(_wsPath, { source_ids, content, type, tags }) {
+    const body = { source_ids };
+    if (content) body.content = content;
+    if (type) body.type = type;
+    if (tags) body.tags = tags;
+    const { text, isError } = await this._fetch("POST", "/v1/consolidate/group", body);
+    if (isError) return { error: text };
+    return { _raw: true, text, isError: false };
+  }
+
   async getContext(_wsPath, message) {
     const res = await this._fetchJson("POST", "/v1/context", { message });
     if (res.error) return { error: res.error };

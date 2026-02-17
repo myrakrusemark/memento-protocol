@@ -42,11 +42,14 @@ function text(result) {
 // ---------------------------------------------------------------------------
 
 describe("tool listing", () => {
-  it("exposes all 12 tools", async () => {
+  it("exposes all expected tools", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
     assert.deepEqual(names, [
+      "memento_consolidate",
       "memento_health",
+      "memento_identity",
+      "memento_identity_update",
       "memento_init",
       "memento_item_create",
       "memento_item_delete",
