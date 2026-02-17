@@ -2,9 +2,9 @@
  * Memory consolidation service.
  *
  * Groups related memories by tag overlap using a union-find (connected
- * components) approach, then generates template-based summaries and
- * creates consolidation records. Source memories are marked as
- * consolidated but never deleted.
+ * components) approach, then generates summaries (AI-powered when
+ * available, template-based as fallback) and creates consolidation
+ * records. Source memories are marked as consolidated but never deleted.
  */
 
 import { randomUUID } from "node:crypto";
@@ -143,6 +143,55 @@ export function generateSummary(group) {
 }
 
 // ---------------------------------------------------------------------------
+// AI-powered summary generation
+// ---------------------------------------------------------------------------
+
+/**
+ * Generate an AI-powered summary for a group of related memories.
+ * Uses Workers AI (@cf/meta/llama-3.1-8b-instruct) when available,
+ * falls back to template-based summary on failure or missing binding.
+ *
+ * @param {object} env - Workers environment (must have env.AI for AI summaries)
+ * @param {Array<{ id: string, content: string, type: string, tags: string[], created_at: string }>} group
+ * @returns {Promise<{ summary: string, method: "ai"|"template" }>}
+ */
+export async function generateAISummary(env, group) {
+  // Check AI binding
+  if (!env || !env.AI) {
+    return { summary: generateSummary(group), method: "template" };
+  }
+
+  try {
+    const memoriesText = group.map((m, i) => {
+      const tags = Array.isArray(m.tags) ? m.tags.join(", ") : "";
+      return `${i + 1}. ${m.content} (type: ${m.type}, tags: [${tags}])`;
+    }).join("\n");
+
+    const result = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+      messages: [
+        {
+          role: "system",
+          content: "You are a memory consolidation system. Synthesize related memories into concise, actionable summaries. Focus on key insights, decisions, and patterns. Be specific, not generic. Write 2-3 paragraphs.",
+        },
+        {
+          role: "user",
+          content: `Synthesize these ${group.length} related memories:\n\n${memoriesText}`,
+        },
+      ],
+      max_tokens: 500,
+    });
+
+    if (result && result.response) {
+      return { summary: result.response, method: "ai" };
+    }
+    // Fallback
+    return { summary: generateSummary(group), method: "template" };
+  } catch {
+    return { summary: generateSummary(group), method: "template" };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main consolidation entry point
 // ---------------------------------------------------------------------------
 
@@ -152,13 +201,14 @@ export function generateSummary(group) {
  * 1. Fetches all non-consolidated, non-expired memories
  * 2. Parses their tags from JSON strings to arrays
  * 3. Finds consolidation groups (3+ memories sharing tags)
- * 4. For each group: creates a consolidation record, marks source memories
+ * 4. For each group: creates a consolidation record (AI or template summary), marks source memories
  * 5. Returns { consolidated: number of groups, created: total memories consolidated }
  *
  * @param {import("@libsql/client").Client} db - Workspace database client
+ * @param {object} [env] - Workers environment (optional; enables AI summaries when env.AI is present)
  * @returns {Promise<{ consolidated: number, created: number }>}
  */
-export async function consolidateMemories(db) {
+export async function consolidateMemories(db, env) {
   const now = new Date().toISOString();
 
   // 1. Fetch all non-consolidated, non-expired memories
@@ -203,7 +253,8 @@ export async function consolidateMemories(db) {
   // 4. For each group: create consolidation record, mark sources
   for (const group of groups) {
     const consolidationId = randomUUID().slice(0, 8);
-    const summary = generateSummary(group);
+    const templateSummary = generateSummary(group);
+    const { summary, method } = await generateAISummary(env, group);
     const sourceIds = group.map((m) => m.id);
 
     // Collect union of all tags
@@ -216,14 +267,16 @@ export async function consolidateMemories(db) {
 
     // Insert consolidation record
     await db.execute({
-      sql: `INSERT INTO consolidations (id, summary, source_ids, tags, type)
-            VALUES (?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO consolidations (id, summary, source_ids, tags, type, method, template_summary)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
       args: [
         consolidationId,
         summary,
         JSON.stringify(sourceIds),
         JSON.stringify(Array.from(allTags).sort()),
         "auto",
+        method,
+        templateSummary,
       ],
     });
 

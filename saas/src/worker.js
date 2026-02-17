@@ -8,6 +8,7 @@
 
 import { createApp } from "./server.js";
 import { getControlDb, initSchema } from "./db/connection.js";
+import { runScheduledTasks } from "./services/scheduler.js";
 
 let initialized = false;
 
@@ -30,5 +31,9 @@ export default {
     }
 
     return app.fetch(request, env, ctx);
+  },
+
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(runScheduledTasks(event.cron, env));
   },
 };

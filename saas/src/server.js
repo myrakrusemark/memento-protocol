@@ -23,6 +23,7 @@ import consolidation from "./routes/consolidation.js";
 import identity from "./routes/identity.js";
 import context from "./routes/context.js";
 import health from "./routes/health.js";
+import admin from "./routes/admin.js";
 
 export function createApp() {
   const app = new Hono();
@@ -59,6 +60,7 @@ export function createApp() {
   v1.route("/context", context);
   v1.route("/identity", identity);
   v1.route("/health", health);
+  v1.route("/admin", admin);
 
   app.route("/v1", v1);
 

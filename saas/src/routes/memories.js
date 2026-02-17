@@ -1,18 +1,22 @@
 /**
  * Memory store/recall/browse routes.
  *
- * POST   /v1/memories         — Store a new memory
- * GET    /v1/memories         — List/browse all memories
- * GET    /v1/memories/recall  — Search memories by query, tags, type
- * POST   /v1/memories/ingest  — Bulk store memories (pre-compact)
- * GET    /v1/memories/:id     — Get single memory
- * PUT    /v1/memories/:id     — Update memory (partial)
- * DELETE /v1/memories/:id     — Delete a specific memory
+ * POST   /v1/memories              — Store a new memory
+ * GET    /v1/memories              — List/browse all memories
+ * GET    /v1/memories/recall       — Search memories by query, tags, type
+ * POST   /v1/memories/ingest       — Bulk store memories (pre-compact)
+ * GET    /v1/memories/:id/graph    — Full subgraph traversal via BFS
+ * GET    /v1/memories/:id/related  — Direct connections only
+ * GET    /v1/memories/:id          — Get single memory
+ * PUT    /v1/memories/:id          — Update memory (partial)
+ * DELETE /v1/memories/:id          — Delete a specific memory
  */
 
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { scoreAndRankMemories } from "../services/scoring.js";
+import { embedAndStore, removeVector } from "../services/embeddings.js";
+import { traverseGraph, getRelated } from "../services/graph.js";
 
 const memories = new Hono();
 
@@ -78,6 +82,9 @@ memories.post("/", async (c) => {
           VALUES (?, ?, ?, ?, ?, ?)`,
     args: [id, content, type, tags, expiresAt, linkages],
   });
+
+  // Fire-and-forget embedding (don't await, don't block response)
+  embedAndStore(c.env, c.get("workspaceName"), id, content).catch(() => {});
 
   const tagList = body.tags && body.tags.length ? ` [${body.tags.join(", ")}]` : "";
 
@@ -311,6 +318,9 @@ memories.post("/ingest", async (c) => {
       args: [id, item.content, type, tags, expiresAt],
     });
 
+    // Fire-and-forget embedding
+    embedAndStore(c.env, c.get("workspaceName"), id, item.content).catch(() => {});
+
     ids.push(id);
   }
 
@@ -318,6 +328,36 @@ memories.post("/ingest", async (c) => {
     { ingested: ids.length, ids, source },
     201
   );
+});
+
+// GET /v1/memories/:id/graph — Full subgraph traversal via BFS
+memories.get("/:id/graph", async (c) => {
+  const db = c.get("workspaceDb");
+  const memoryId = c.req.param("id");
+  const depth = Math.min(5, Math.max(1, parseInt(c.req.query("depth") || "2", 10)));
+
+  // Verify memory exists
+  const exists = await db.execute({ sql: "SELECT id FROM memories WHERE id = ?", args: [memoryId] });
+  if (exists.rows.length === 0) {
+    return c.json({ error: "Memory not found." }, 404);
+  }
+
+  const graph = await traverseGraph(db, memoryId, depth);
+  return c.json(graph);
+});
+
+// GET /v1/memories/:id/related — Direct connections only
+memories.get("/:id/related", async (c) => {
+  const db = c.get("workspaceDb");
+  const memoryId = c.req.param("id");
+
+  const exists = await db.execute({ sql: "SELECT id FROM memories WHERE id = ?", args: [memoryId] });
+  if (exists.rows.length === 0) {
+    return c.json({ error: "Memory not found." }, 404);
+  }
+
+  const related = await getRelated(db, memoryId);
+  return c.json(related);
 });
 
 // GET /v1/memories/:id — Get single memory
@@ -428,6 +468,9 @@ memories.delete("/:id", async (c) => {
     sql: "DELETE FROM access_log WHERE memory_id = ?",
     args: [memoryId],
   });
+
+  // Clean up vector index (fire-and-forget)
+  removeVector(c.env, c.get("workspaceName"), memoryId).catch(() => {});
 
   return c.json({
     content: [{ type: "text", text: `Memory ${memoryId} deleted.` }],

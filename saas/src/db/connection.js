@@ -168,6 +168,12 @@ CREATE TABLE IF NOT EXISTS identity_snapshots (
   created_at TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS workspace_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS working_memory_items (
   id TEXT PRIMARY KEY,
   category TEXT NOT NULL,
@@ -211,6 +217,9 @@ export async function initSchema(db, schemaType = "all") {
 async function runMigrations(db) {
   const migrations = [
     `ALTER TABLE memories ADD COLUMN linkages TEXT DEFAULT '[]'`,
+    `ALTER TABLE memories ADD COLUMN embedded_at TEXT`,
+    `ALTER TABLE consolidations ADD COLUMN method TEXT DEFAULT 'template'`,
+    `ALTER TABLE consolidations ADD COLUMN template_summary TEXT`,
   ];
   for (const sql of migrations) {
     try {

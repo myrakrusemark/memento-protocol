@@ -6,7 +6,8 @@
  */
 
 import { Hono } from "hono";
-import { scoreAndRankMemories } from "../services/scoring.js";
+import { scoreAndRankMemories, hybridRank } from "../services/scoring.js";
+import { semanticSearch } from "../services/embeddings.js";
 
 const context = new Hono();
 
@@ -74,13 +75,13 @@ context.post("/", async (c) => {
     };
   }
 
-  // 2. Memory recall — score memories against message keywords
+  // 2. Memory recall — keyword scoring + optional semantic search (hybrid)
   if (include.includes("memories") && message) {
     const keywords = extractKeywords(message);
 
     const memoriesResult = await db.execute({
       sql: `SELECT id, content, type, tags, created_at, expires_at,
-                   access_count, last_accessed_at
+                   access_count, last_accessed_at, linkages
             FROM memories
             WHERE consolidated = 0
               AND (expires_at IS NULL OR expires_at > ?)
@@ -88,7 +89,64 @@ context.post("/", async (c) => {
       args: [nowISO],
     });
 
-    const topResults = scoreAndRankMemories(memoriesResult.rows, message, now, 10);
+    // Keyword scoring (existing behavior)
+    const keywordResults = scoreAndRankMemories(memoriesResult.rows, message, now, 20);
+
+    // Semantic search (parallel, gracefully degrades to [])
+    const vectorResults = await semanticSearch(c.env, workspaceName, message, 10);
+
+    let topResults;
+    let isHybrid = false;
+
+    if (vectorResults.length > 0) {
+      // Read alpha from workspace_settings (default 0.5)
+      let alpha = 0.5;
+      try {
+        const alphaResult = await db.execute({
+          sql: "SELECT value FROM workspace_settings WHERE key = 'recall_alpha'",
+          args: [],
+        });
+        if (alphaResult.rows.length > 0) {
+          const parsed = parseFloat(alphaResult.rows[0].value);
+          if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) {
+            alpha = parsed;
+          }
+        }
+      } catch {
+        // Use default alpha
+      }
+
+      const hybridResults = hybridRank(keywordResults, vectorResults, alpha, 10);
+
+      // Fetch memory objects for vector-only results (those without a memory object)
+      for (const hr of hybridResults) {
+        if (!hr.memory && hr.memoryId) {
+          const memRow = await db.execute({
+            sql: `SELECT id, content, type, tags, created_at, expires_at,
+                         access_count, last_accessed_at, linkages
+                  FROM memories WHERE id = ?`,
+            args: [hr.memoryId],
+          });
+          if (memRow.rows.length > 0) {
+            hr.memory = memRow.rows[0];
+          }
+        }
+      }
+
+      // Filter out results where memory could not be fetched
+      topResults = hybridResults
+        .filter((hr) => hr.memory)
+        .map((hr) => ({
+          memory: hr.memory,
+          score: hr.score,
+          keywordScore: hr.keywordScore,
+          vectorScore: hr.vectorScore,
+        }));
+      isHybrid = true;
+    } else {
+      // Pure keyword fallback (no vector bindings or no results)
+      topResults = keywordResults;
+    }
 
     // Log access for scored results (fire-and-forget)
     for (const r of topResults) {
@@ -102,15 +160,41 @@ context.post("/", async (c) => {
       }).catch(() => {});
     }
 
-    result.memories = {
-      matches: topResults.map((r) => ({
+    const matches = topResults.map((r) => {
+      const match = {
         id: r.memory.id,
         content: r.memory.content,
         type: r.memory.type,
         tags: safeParseTags(r.memory.tags),
         score: Math.round(r.score * 1000) / 1000,
-      })),
+      };
+      if (isHybrid) {
+        match.keyword_score = Math.round((r.keywordScore || 0) * 1000) / 1000;
+        match.vector_score = Math.round((r.vectorScore || 0) * 1000) / 1000;
+      }
+      return match;
+    });
+
+    // If include_graph is requested, attach linkages to each match
+    if (body.include_graph) {
+      for (const match of matches) {
+        const mem = topResults.find((r) => r.memory.id === match.id);
+        if (mem?.memory?.linkages) {
+          try {
+            match.linkages = JSON.parse(mem.memory.linkages || "[]");
+          } catch {
+            match.linkages = [];
+          }
+        } else {
+          match.linkages = [];
+        }
+      }
+    }
+
+    result.memories = {
+      matches,
       query_terms: keywords,
+      ranking: isHybrid ? "hybrid" : "keyword",
     };
 
     // Also count total memories for meta

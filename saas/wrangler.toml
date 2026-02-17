@@ -12,3 +12,13 @@ compatibility_flags = ["nodejs_compat"]
 
 [observability]
 enabled = true
+
+[ai]
+binding = "AI"
+
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "memento-memories"
+
+[triggers]
+crons = ["0 */6 * * *", "0 3 * * *"]
