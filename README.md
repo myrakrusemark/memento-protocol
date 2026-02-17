@@ -30,9 +30,24 @@ Memories aren't permanent. They have types (fact, decision, observation, instruc
 
 ---
 
-## Get Started (Hosted)
+## Get Started
 
-The hosted backend gives you semantic search, relevance decay, memory consolidation, identity crystals, and multi-workspace isolation. One curl to sign up, then configure and go.
+```bash
+git clone https://github.com/myrakrusemark/memento-protocol.git
+cd memento-protocol && npm install
+```
+
+Verify the install:
+
+```bash
+npm run test:smoke
+```
+
+You should see all tools listed and "All smoke tests passed." This confirms the server works before you wire it into anything.
+
+**Local mode needs nothing else** — skip to [Configure](#step-2-configure-your-mcp-client-1) in the local section below. No account, no API key, works offline.
+
+**Hosted mode** adds semantic search, relevance decay, consolidation, identity crystals, and multi-workspace isolation. One curl to sign up:
 
 ### Step 1: Sign up
 
@@ -57,23 +72,20 @@ Response:
 
 Save the `api_key` — you'll need it in the next step.
 
-### Step 2: Install the MCP server
+### Step 2: Configure your MCP client
 
-```bash
-git clone https://github.com/myrakrusemark/memento-protocol.git
-cd memento-protocol && npm install
-```
+**Claude Code (project-level):** Create `.mcp.json` in your project root.
 
-### Step 3: Configure your MCP client
+**Claude Code (global):** Add to `~/.claude.json` under `"mcpServers"`.
 
-Add to your project's `.mcp.json` (or `~/.claude.json` for global):
+**Claude Desktop:** Add to your `claude_desktop_config.json`.
 
 ```json
 {
   "mcpServers": {
     "memento": {
       "command": "node",
-      "args": ["/absolute/path/to/memento-protocol/src/index.js"],
+      "args": ["/home/you/memento-protocol/src/index.js"],
       "env": {
         "MEMENTO_API_KEY": "mp_live_your_key_here",
         "MEMENTO_API_URL": "https://memento-api.myrakrusemark.workers.dev",
@@ -84,11 +96,13 @@ Add to your project's `.mcp.json` (or `~/.claude.json` for global):
 }
 ```
 
-### Step 4: Restart Claude Code
+> **Tip:** Replace the path with the actual absolute path to `src/index.js` in your clone. Run `echo "$(pwd)/src/index.js"` from inside the repo to get it.
+
+### Step 3: Restart Claude Code
 
 The MCP server connects at startup. Restart your client so it picks up the new config.
 
-### Step 5: First session
+### Step 4: First session
 
 ```
 > memento_health()              # verify connection
@@ -106,31 +120,24 @@ That's it. The agent reads memory at session start, updates it as it works, and 
 
 ## Get Started (Local)
 
-Local mode uses file-based storage in a `.memento/` directory — zero cloud dependencies, works offline, no account needed.
-
-### Install
-
-```bash
-git clone https://github.com/myrakrusemark/memento-protocol.git
-cd memento-protocol && npm install
-```
+Local mode uses file-based storage in a `.memento/` directory — zero cloud dependencies, works offline, no account needed. If you already cloned and installed above, skip straight to configure.
 
 ### Configure
 
-Add to your project's `.mcp.json`:
+Create `.mcp.json` in your project root (or add to `~/.claude.json` for global):
 
 ```json
 {
   "mcpServers": {
     "memento": {
       "command": "node",
-      "args": ["/absolute/path/to/memento-protocol/src/index.js"]
+      "args": ["/home/you/memento-protocol/src/index.js"]
     }
   }
 }
 ```
 
-No `env` block needed — the server detects local mode automatically when `MEMENTO_API_KEY` is absent.
+No `env` block — the server detects local mode automatically when `MEMENTO_API_KEY` is absent. Memories are stored in `.memento/` relative to your working directory.
 
 Restart Claude Code, then run `memento_init()` to create the workspace.
 
