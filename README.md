@@ -45,10 +45,6 @@ npm run test:smoke
 
 You should see all tools listed and "All smoke tests passed." This confirms the server works before you wire it into anything.
 
-**Local mode needs nothing else** — skip to [Configure](#step-2-configure-your-mcp-client-1) in the local section below. No account, no API key, works offline.
-
-**Hosted mode** adds semantic search, relevance decay, consolidation, identity crystals, and multi-workspace isolation. One curl to sign up:
-
 ### Step 1: Sign up
 
 ```bash
@@ -115,31 +111,6 @@ The MCP server connects at startup. Restart your client so it picks up the new c
 ```
 
 That's it. The agent reads memory at session start, updates it as it works, and writes instructions for next time.
-
----
-
-## Get Started (Local)
-
-Local mode uses file-based storage in a `.memento/` directory — zero cloud dependencies, works offline, no account needed. If you already cloned and installed above, skip straight to configure.
-
-### Configure
-
-Create `.mcp.json` in your project root (or add to `~/.claude.json` for global):
-
-```json
-{
-  "mcpServers": {
-    "memento": {
-      "command": "node",
-      "args": ["/home/you/memento-protocol/src/index.js"]
-    }
-  }
-}
-```
-
-No `env` block — the server detects local mode automatically when `MEMENTO_API_KEY` is absent. Memories are stored in `.memento/` relative to your working directory.
-
-Restart Claude Code, then run `memento_init()` to create the workspace.
 
 ---
 
@@ -480,49 +451,16 @@ Returns working memory stats, memory counts (active/expired/consolidated), skip 
 
 ---
 
-## What This Is Not
-
-The local reference server is deliberately simple. It provides the protocol — the structure and tools for agent memory — without the sophistication of a full memory system. In local mode, recall uses keyword matching, there's no scoring or decay, and workspaces are single-agent.
-
-The **hosted mode** adds what the reference implementation leaves out:
+## What's Included
 
 - **Relevance scoring** — keyword + recency + access-tracked decay
+- **Semantic search** — vector embeddings via `bge-small-en-v1.5` for conceptual recall
 - **Memory consolidation** — automatic grouping and summarization of related memories
 - **Identity crystallization** — synthesis of agent personality from accumulated memories
 - **Multi-agent workspaces** — isolated workspaces per project, per agent, per team
 - **Full REST API** — every operation available as an HTTP endpoint
 
-The local mode proves the protocol works. The hosted mode makes it production-ready.
-
 ---
-
-## Storage Layout (Local Mode)
-
-```
-.memento/
-├── working-memory.md    # The core document — read every session
-├── memories/            # One JSON file per stored memory
-│   ├── a1b2c3d4.json
-│   └── e5f6g7h8.json
-└── skip-index.json      # Queryable skip list entries
-```
-
-Working memory is a single markdown file. Memories are individual JSON files (easy to inspect, easy to back up). The skip list index is a JSON array for fast lookups.
-
-### Adding to `.gitignore`
-
-You'll probably want to track working memory but not individual memory files:
-
-```gitignore
-.memento/memories/
-.memento/skip-index.json
-```
-
-Or ignore the whole thing if memory is per-machine:
-
-```gitignore
-.memento/
-```
 
 ## Development
 
