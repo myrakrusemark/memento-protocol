@@ -140,7 +140,6 @@ const SECTION_MAP = {
   active_work: "Active Work",
   standing_decisions: "Standing Decisions",
   skip_list: "Skip List",
-  activity_log: "Activity Log",
   session_notes: "Session Notes",
 };
 
@@ -243,7 +242,7 @@ server.tool(
       .string()
       .optional()
       .describe(
-        "Section to read: active_work, standing_decisions, skip_list, activity_log, session_notes"
+        "Section to read: active_work, standing_decisions, skip_list, session_notes"
       ),
     path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
   },
@@ -268,12 +267,12 @@ server.tool(
 
 server.tool(
   "memento_update",
-  "Update a section of working memory (active_work, standing_decisions, skip_list, activity_log, session_notes)",
+  "Update a section of working memory (active_work, standing_decisions, skip_list, session_notes)",
   {
     section: z
       .string()
       .describe(
-        "Section to update: active_work, standing_decisions, skip_list, activity_log, session_notes"
+        "Section to update: active_work, standing_decisions, skip_list, session_notes"
       ),
     content: z.string().describe("New content for the section"),
     path: z.string().optional().describe("Workspace path (auto-detected if omitted)"),
@@ -539,10 +538,10 @@ server.tool(
 
 server.tool(
   "memento_item_create",
-  "Create a structured working memory item (active_work, standing_decision, skip, waiting_for, session_note, activity_log)",
+  "Create a structured working memory item (active_work, standing_decision, skip_list, waiting_for, session_note)",
   {
     category: z
-      .enum(["active_work", "standing_decision", "skip", "waiting_for", "session_note", "activity_log"])
+      .enum(["active_work", "standing_decision", "skip_list", "waiting_for", "session_note"])
       .describe("Item category"),
     title: z.string().describe("Item title"),
     content: z.string().optional().describe("Item content/details"),
@@ -595,7 +594,7 @@ server.tool(
     title: z.string().optional().describe("New title"),
     content: z.string().optional().describe("New content"),
     category: z
-      .enum(["active_work", "standing_decision", "skip", "waiting_for", "session_note", "activity_log"])
+      .enum(["active_work", "standing_decision", "skip_list", "waiting_for", "session_note"])
       .optional()
       .describe("New category"),
     status: z
@@ -669,7 +668,7 @@ server.tool(
   "List working memory items with optional filters",
   {
     category: z
-      .enum(["active_work", "standing_decision", "skip", "waiting_for", "session_note", "activity_log"])
+      .enum(["active_work", "standing_decision", "skip_list", "waiting_for", "session_note"])
       .optional()
       .describe("Filter by category"),
     status: z
