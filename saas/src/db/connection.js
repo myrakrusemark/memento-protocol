@@ -9,7 +9,12 @@ import { createClient } from "@libsql/client";
 
 const DEFAULT_DB_URL = "file:./dev.db";
 
-/** Cache of database clients keyed by URL to avoid duplicate connections. */
+/**
+ * Cache of database clients keyed by URL.
+ * Only used in local dev (file: URLs). Turso HTTP clients are created
+ * fresh per request to avoid stale connections on Cloudflare Workers,
+ * where isolates hibernate between invocations.
+ */
 const clientCache = new Map();
 
 /**
@@ -28,17 +33,20 @@ export function setTestDb(client) {
 
 /**
  * Get or create a libsql client for the given URL and optional auth token.
- * Caches clients so repeated calls return the same instance.
+ * Local file: URLs are cached (safe, same process). Turso libsql: URLs
+ * are created fresh each call — they're HTTP-based so there's no TCP
+ * connection to keep alive, and caching causes stale state on Workers.
  */
 function getClient(url, authToken) {
+  const isLocal = url.startsWith("file:");
   const cacheKey = authToken ? `${url}::${authToken.slice(0, 16)}` : url;
-  if (clientCache.has(cacheKey)) {
+  if (isLocal && clientCache.has(cacheKey)) {
     return clientCache.get(cacheKey);
   }
   const opts = { url };
   if (authToken) opts.authToken = authToken;
   const client = createClient(opts);
-  clientCache.set(cacheKey, client);
+  if (isLocal) clientCache.set(cacheKey, client);
   return client;
 }
 
@@ -229,6 +237,7 @@ function parseStatements(sql) {
 
 /**
  * Close all cached database clients. Used in tests for cleanup.
+ * Only local file: clients are cached; Turso clients are ephemeral.
  */
 export async function closeAll() {
   for (const client of clientCache.values()) {
