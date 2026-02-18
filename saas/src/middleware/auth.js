@@ -43,7 +43,9 @@ export function authMiddleware() {
     const db = getControlDb();
 
     const result = await db.execute({
-      sql: "SELECT id, user_id, revoked_at FROM api_keys WHERE key_hash = ?",
+      sql: `SELECT ak.id, ak.user_id, ak.revoked_at, u.plan
+            FROM api_keys ak JOIN users u ON ak.user_id = u.id
+            WHERE ak.key_hash = ?`,
       args: [keyHash],
     });
 
@@ -73,6 +75,7 @@ export function authMiddleware() {
 
     c.set("userId", row.user_id);
     c.set("apiKeyId", row.id);
+    c.set("userPlan", row.plan || "free");
 
     await next();
   };

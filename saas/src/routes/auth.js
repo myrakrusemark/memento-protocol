@@ -7,6 +7,7 @@
 
 import { randomUUID, createHash, randomBytes } from "node:crypto";
 import { getControlDb, initSchema, getWorkspaceDb } from "../db/connection.js";
+import { PLANS } from "../config/plans.js";
 
 /**
  * In-memory rate limit tracker.
@@ -180,11 +181,7 @@ export function registerAuthRoutes(app) {
         user_id: userId,
         api_url: "https://memento-api.myrakrusemark.workers.dev",
         plan: "free",
-        limits: {
-          memories: 100,
-          items: 20,
-          workspaces: 1,
-        },
+        limits: PLANS.free,
       },
       201
     );

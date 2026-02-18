@@ -84,6 +84,7 @@ fi
 
 DETAIL_TEXT="Memento Recall: ${SAAS_COUNT} memories"
 DETAIL_TEXT="$DETAIL_TEXT"$'\n'"$SAAS_DETAIL"
+DETAIL_TEXT="$DETAIL_TEXT"$'\n'$'\n'"REMINDER: If Memento MCP tools are not loaded, run: ToolSearch query=\"+memento\" max_results=20"
 
 SUMMARY="Memento Recall: ${SAAS_COUNT} memories"
 python3 -c "

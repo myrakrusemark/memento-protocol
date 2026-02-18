@@ -7,6 +7,7 @@
  * for all storage operations.
  */
 
+import { config as dotenvConfig } from "dotenv";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -15,6 +16,9 @@ import { fileURLToPath } from "node:url";
 import { HostedStorageAdapter } from "./storage/hosted.js";
 
 const __filename = fileURLToPath(import.meta.url);
+
+// Load .env from the package root (next to package.json)
+dotenvConfig({ path: path.resolve(path.dirname(__filename), "..", ".env") });
 
 // ---------------------------------------------------------------------------
 // Require API credentials
@@ -702,7 +706,12 @@ async function main() {
 }
 
 // Start the server when run directly (not when imported for testing)
-const isMainModule = process.argv[1] && path.resolve(process.argv[1]) === __filename;
+// Use fs.realpathSync to resolve npm bin symlinks
+import fs from "node:fs";
+const isMainModule =
+  process.argv[1] &&
+  fs.realpathSync(path.resolve(process.argv[1])) ===
+    fs.realpathSync(__filename);
 if (isMainModule) {
   main().catch((err) => {
     console.error("Memento server failed to start:", err);

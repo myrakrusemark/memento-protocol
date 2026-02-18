@@ -5,6 +5,8 @@
  */
 
 import { Hono } from "hono";
+import { getLimits } from "../config/plans.js";
+import { getControlDb } from "../db/connection.js";
 
 const health = new Hono();
 
@@ -83,6 +85,27 @@ health.get("/", async (c) => {
   lines.push("**Access Log**");
   const accessCount = await db.execute("SELECT COUNT(*) as count FROM access_log");
   lines.push(`  Total accesses: ${accessCount.rows[0].count}`);
+
+  // Quota info
+  const plan = c.get("userPlan") || "free";
+  const limits = getLimits(plan);
+  const itemCount = await db.execute(
+    "SELECT COUNT(*) as count FROM working_memory_items WHERE status != 'archived'"
+  );
+  const controlDb = getControlDb();
+  const wsCount = await controlDb.execute({
+    sql: "SELECT COUNT(*) as count FROM workspaces WHERE user_id = ?",
+    args: [c.get("userId")],
+  });
+
+  const fmtLimit = (n) => (n === Infinity ? "unlimited" : String(n));
+
+  lines.push("");
+  lines.push("**Quota**");
+  lines.push(`  Plan: ${plan}`);
+  lines.push(`  Memories: ${total} / ${fmtLimit(limits.memories)}`);
+  lines.push(`  Items: ${itemCount.rows[0].count} / ${fmtLimit(limits.items)}`);
+  lines.push(`  Workspaces: ${wsCount.rows[0].count} / ${fmtLimit(limits.workspaces)}`);
 
   return c.json({
     content: [{ type: "text", text: lines.join("\n") }],

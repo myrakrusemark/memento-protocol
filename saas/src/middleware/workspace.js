@@ -14,6 +14,7 @@ import {
   createTursoDatabase,
   createTursoToken,
 } from "../services/turso.js";
+import { getLimits } from "../config/plans.js";
 
 /**
  * Seed default working memory sections in a new workspace.
@@ -60,6 +61,21 @@ export function workspaceMiddleware() {
     let dbToken = null;
 
     if (result.rows.length === 0) {
+      // Workspace quota check before auto-creating
+      const limits = getLimits(c.get("userPlan"));
+      if (limits.workspaces !== Infinity) {
+        const wsCount = await controlDb.execute({
+          sql: "SELECT COUNT(*) as count FROM workspaces WHERE user_id = ?",
+          args: [userId],
+        });
+        if (wsCount.rows[0].count >= limits.workspaces) {
+          return c.json(
+            { error: "quota_exceeded", message: `Workspace limit (${limits.workspaces}) reached.`, limit: limits.workspaces, current: wsCount.rows[0].count },
+            403
+          );
+        }
+      }
+
       // Auto-create workspace
       workspaceId = randomUUID().slice(0, 8);
 

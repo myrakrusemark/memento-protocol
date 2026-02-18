@@ -15,6 +15,7 @@ import {
   createTursoToken,
   deleteTursoDatabase,
 } from "../services/turso.js";
+import { getLimits } from "../config/plans.js";
 
 const workspaces = new Hono();
 
@@ -65,6 +66,21 @@ workspaces.post("/", async (c) => {
       },
       200
     );
+  }
+
+  // Workspace quota check
+  const limits = getLimits(c.get("userPlan"));
+  if (limits.workspaces !== Infinity) {
+    const wsCount = await controlDb.execute({
+      sql: "SELECT COUNT(*) as count FROM workspaces WHERE user_id = ?",
+      args: [userId],
+    });
+    if (wsCount.rows[0].count >= limits.workspaces) {
+      return c.json(
+        { error: "quota_exceeded", message: `Workspace limit (${limits.workspaces}) reached.`, limit: limits.workspaces, current: wsCount.rows[0].count },
+        403
+      );
+    }
   }
 
   const id = randomUUID().slice(0, 8);

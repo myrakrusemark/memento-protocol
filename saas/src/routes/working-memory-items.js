@@ -10,6 +10,7 @@
 
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
+import { getLimits } from "../config/plans.js";
 
 const items = new Hono();
 
@@ -26,6 +27,21 @@ const VALID_STATUSES = ["active", "paused", "completed", "archived"];
 // POST /items — Create item
 items.post("/", async (c) => {
   const db = c.get("workspaceDb");
+
+  // Quota check — count active (non-archived) items
+  const limits = getLimits(c.get("userPlan"));
+  if (limits.items !== Infinity) {
+    const countResult = await db.execute(
+      "SELECT COUNT(*) as count FROM working_memory_items WHERE status != 'archived'"
+    );
+    if (countResult.rows[0].count >= limits.items) {
+      return c.json(
+        { error: "quota_exceeded", message: `Item limit (${limits.items}) reached.`, limit: limits.items, current: countResult.rows[0].count },
+        403
+      );
+    }
+  }
+
   const body = await c.req.json();
 
   const { category, title, content } = body;

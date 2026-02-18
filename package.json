@@ -1,6 +1,7 @@
 {
-  "name": "memento-protocol",
-  "version": "0.1.0",
+  "name": "memento-mcp",
+  "version": "0.1.2",
+  "mcpName": "io.github.myrakrusemark/memento-protocol",
   "description": "The Memento Protocol — persistent memory for AI agents",
   "type": "module",
   "main": "src/index.js",
@@ -17,9 +18,18 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "dotenv": "^16.6.1",
     "zod": "^3.24.2"
   },
+  "files": [
+    "src/",
+    "scripts/",
+    "docs/",
+    "LICENSE",
+    "README.md",
+    ".env.example"
+  ],
   "keywords": [
     "mcp",
     "memory",

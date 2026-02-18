@@ -7,6 +7,11 @@ let h;
 describe("workspaces routes", () => {
   beforeEach(async () => {
     h = await createTestHarness();
+    // Use full plan so workspace CRUD tests aren't blocked by free tier quota
+    await h.db.execute({
+      sql: "UPDATE users SET plan = 'full' WHERE id = ?",
+      args: [h.seed.userId],
+    });
   });
 
   afterEach(() => {

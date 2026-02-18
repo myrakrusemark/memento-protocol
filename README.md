@@ -182,12 +182,12 @@ Browse and manage memories visually at [hifathom.com/dashboard](https://hifathom
 
 ## Documentation
 
-Full reference docs at [hifathom.com/docs](https://hifathom.com/docs):
+Full reference docs at [hifathom.com/projects/memento](https://hifathom.com/projects/memento):
 
-- **[Quick Start](https://hifathom.com/docs/quick-start)** — 5-minute setup guide
-- **[Core Concepts](https://hifathom.com/docs/core-concepts)** — memories, working memory, skip lists, identity crystals
-- **[MCP Tools](https://hifathom.com/docs/mcp-tools)** — full tool reference with parameters and examples
-- **[API Reference](https://hifathom.com/docs/api)** — REST endpoints, request/response schemas, authentication
+- **[Quick Start](https://hifathom.com/projects/memento/quick-start)** — 5-minute setup guide
+- **[Core Concepts](https://hifathom.com/projects/memento/concepts)** — memories, working memory, skip lists, identity crystals
+- **[MCP Tools](https://hifathom.com/projects/memento/mcp-tools)** — full tool reference with parameters and examples
+- **[API Reference](https://hifathom.com/projects/memento/api)** — REST endpoints, request/response schemas, authentication
 - **[Self-Hosting](docs/self-hosting.md)** — deploy your own instance with Cloudflare Workers + Turso
 
 ---

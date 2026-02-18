@@ -1,0 +1,43 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.myrakrusemark/memento-protocol",
+  "description": "Persistent memory for AI agents. Store what matters, recall by meaning, skip the rest.",
+  "repository": {
+    "url": "https://github.com/myrakrusemark/memento-protocol",
+    "source": "github"
+  },
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "memento-mcp",
+      "version": "0.1.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "description": "Your Memento Protocol API key (get one at https://hifathom.com/projects/memento)",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": true,
+          "name": "MEMENTO_API_KEY"
+        },
+        {
+          "description": "API URL for Memento Protocol SaaS",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": false,
+          "name": "MEMENTO_API_URL"
+        },
+        {
+          "description": "Your workspace name",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": false,
+          "name": "MEMENTO_WORKSPACE"
+        }
+      ]
+    }
+  ]
+}

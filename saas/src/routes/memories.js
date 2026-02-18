@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import { scoreAndRankMemories } from "../services/scoring.js";
 import { embedAndStore, removeVector } from "../services/embeddings.js";
 import { traverseGraph, getRelated } from "../services/graph.js";
+import { getLimits } from "../config/plans.js";
 
 const memories = new Hono();
 
@@ -61,6 +62,19 @@ function validateLinkages(linkages) {
 // POST /v1/memories — Store a memory
 memories.post("/", async (c) => {
   const db = c.get("workspaceDb");
+
+  // Quota check
+  const limits = getLimits(c.get("userPlan"));
+  if (limits.memories !== Infinity) {
+    const countResult = await db.execute("SELECT COUNT(*) as count FROM memories");
+    if (countResult.rows[0].count >= limits.memories) {
+      return c.json(
+        { error: "quota_exceeded", message: `Memory limit (${limits.memories}) reached.`, limit: limits.memories, current: countResult.rows[0].count },
+        403
+      );
+    }
+  }
+
   const body = await c.req.json();
 
   const content = body.content;
@@ -299,6 +313,20 @@ memories.post("/ingest", async (c) => {
       { error: "Maximum 100 memories per ingest request." },
       400
     );
+  }
+
+  // Quota check — current count + batch size must not exceed limit
+  const limits = getLimits(c.get("userPlan"));
+  if (limits.memories !== Infinity) {
+    const countResult = await db.execute("SELECT COUNT(*) as count FROM memories");
+    const current = countResult.rows[0].count;
+    const validItems = items.filter((i) => i.content);
+    if (current + validItems.length > limits.memories) {
+      return c.json(
+        { error: "quota_exceeded", message: `Memory limit (${limits.memories}) would be exceeded. Current: ${current}, batch: ${validItems.length}.`, limit: limits.memories, current },
+        403
+      );
+    }
   }
 
   const source = body.source || "bulk";

@@ -25,3 +25,5 @@ coverage/
 
 # Syncthing conflicts
 *.sync-conflict-*
+.npmrc
+.mcpregistry_github_token
