@@ -125,11 +125,10 @@ if [ -z "$SAAS_COUNT" ] || [ "$SAAS_COUNT" = "0" ]; then
 fi
 
 # Block the Stop so Claude continues — the reason becomes Claude's next instruction.
-# Claude should absorb the memories and respond with <...> (presence without production).
 REASON="Autonomous Recall: ${SAAS_COUNT} memories surfaced from your last response.
 ${SAAS_DETAIL}
 
-You have absorbed these memories into context. If any recalled memory is stale, wrong, or overlaps with others — update, delete, or consolidate it now. Then respond with <...> — active silence."
+You have absorbed these memories into context. If any recalled memory is stale, wrong, or overlaps with others — update, delete, or consolidate it now. Otherwise continue naturally."
 
 SUMMARY="Autonomous Recall: ${SAAS_COUNT} memories"
 python3 -c "
