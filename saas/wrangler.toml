@@ -20,5 +20,9 @@ binding = "AI"
 binding = "VECTORIZE"
 index_name = "memento-memories"
 
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "memento-images"
+
 [triggers]
 crons = ["0 */6 * * *", "0 3 * * *"]

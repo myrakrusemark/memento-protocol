@@ -220,6 +220,7 @@ async function runMigrations(db) {
     `ALTER TABLE memories ADD COLUMN embedded_at TEXT`,
     `ALTER TABLE consolidations ADD COLUMN method TEXT DEFAULT 'template'`,
     `ALTER TABLE consolidations ADD COLUMN template_summary TEXT`,
+    `ALTER TABLE memories ADD COLUMN images TEXT DEFAULT '[]'`,
   ];
   for (const sql of migrations) {
     try {

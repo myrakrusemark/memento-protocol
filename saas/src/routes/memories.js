@@ -19,6 +19,10 @@ import { embedAndStore, removeVector } from "../services/embeddings.js";
 import { traverseGraph, getRelated } from "../services/graph.js";
 import { getLimits } from "../config/plans.js";
 
+const MAX_IMAGES_PER_MEMORY = 5;
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB decoded
+const ALLOWED_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
+
 const memories = new Hono();
 
 function safeParseTags(tagsStr) {
@@ -91,23 +95,69 @@ memories.post("/", async (c) => {
   const expiresAt = body.expires || null;
   const linkages = JSON.stringify(validateLinkages(body.linkages || []));
 
+  // Process images if provided
+  let imagesMeta = [];
+  if (Array.isArray(body.images) && body.images.length > 0) {
+    if (body.images.length > MAX_IMAGES_PER_MEMORY) {
+      return c.json(
+        { error: `Maximum ${MAX_IMAGES_PER_MEMORY} images per memory.` },
+        400
+      );
+    }
+
+    for (const img of body.images) {
+      if (!img.data || !img.filename || !img.mimetype) {
+        return c.json(
+          { error: "Each image requires data (base64), filename, and mimetype." },
+          400
+        );
+      }
+      if (!ALLOWED_IMAGE_TYPES.has(img.mimetype)) {
+        return c.json(
+          { error: `Unsupported image type: ${img.mimetype}. Allowed: ${[...ALLOWED_IMAGE_TYPES].join(", ")}` },
+          400
+        );
+      }
+
+      const decoded = Uint8Array.from(atob(img.data), (ch) => ch.charCodeAt(0));
+      if (decoded.byteLength > MAX_IMAGE_BYTES) {
+        return c.json(
+          { error: `Image "${img.filename}" exceeds 10MB limit.` },
+          400
+        );
+      }
+
+      const workspace = c.get("workspaceName");
+      const key = `${workspace}/${id}/${img.filename}`;
+
+      if (c.env?.IMAGES) {
+        await c.env.IMAGES.put(key, decoded, {
+          httpMetadata: { contentType: img.mimetype },
+        });
+      }
+
+      imagesMeta.push({ key, filename: img.filename, mimetype: img.mimetype, size: decoded.byteLength });
+    }
+  }
+
   await db.execute({
-    sql: `INSERT INTO memories (id, content, type, tags, expires_at, linkages)
-          VALUES (?, ?, ?, ?, ?, ?)`,
-    args: [id, content, type, tags, expiresAt, linkages],
+    sql: `INSERT INTO memories (id, content, type, tags, expires_at, linkages, images)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    args: [id, content, type, tags, expiresAt, linkages, JSON.stringify(imagesMeta)],
   });
 
   // Fire-and-forget embedding (don't await, don't block response)
   embedAndStore(c.env, c.get("workspaceName"), id, content).catch(() => {});
 
   const tagList = body.tags && body.tags.length ? ` [${body.tags.join(", ")}]` : "";
+  const imgStr = imagesMeta.length ? ` (${imagesMeta.length} image${imagesMeta.length === 1 ? "" : "s"})` : "";
 
   return c.json(
     {
       content: [
         {
           type: "text",
-          text: `Stored memory ${id} (${type})${tagList}`,
+          text: `Stored memory ${id} (${type})${tagList}${imgStr}`,
         },
       ],
     },
@@ -174,7 +224,7 @@ memories.get("/", async (c) => {
   // Fetch page
   const result = await db.execute({
     sql: `SELECT id, content, type, tags, created_at, expires_at, relevance,
-                 access_count, last_accessed_at, consolidated, consolidated_into, linkages
+                 access_count, last_accessed_at, consolidated, consolidated_into, linkages, images
           FROM memories ${whereStr}
           ORDER BY ${sortCol} ${sortOrder}
           LIMIT ? OFFSET ?`,
@@ -185,6 +235,7 @@ memories.get("/", async (c) => {
     ...row,
     tags: safeParseTags(row.tags),
     linkages: safeParseJson(row.linkages, []),
+    images: safeParseJson(row.images, []),
   }));
 
   return c.json({ memories, total, offset, limit });
@@ -197,6 +248,7 @@ memories.get("/recall", async (c) => {
   const tagsParam = c.req.query("tags");
   const typeParam = c.req.query("type");
   const limitParam = parseInt(c.req.query("limit") || "10", 10);
+  const format = c.req.query("format");
 
   if (!query) {
     return c.json(
@@ -213,7 +265,7 @@ memories.get("/recall", async (c) => {
   // without FTS extension, so we do keyword scoring in JS like the reference server)
   const result = await db.execute({
     sql: `SELECT id, content, type, tags, created_at, expires_at,
-                 access_count, last_accessed_at, linkages
+                 access_count, last_accessed_at, linkages, images
           FROM memories
           WHERE consolidated = 0
             AND (expires_at IS NULL OR expires_at > ?)
@@ -244,6 +296,9 @@ memories.get("/recall", async (c) => {
   const topResults = scoreAndRankMemories(candidates, query, new Date(), limit);
 
   if (topResults.length === 0) {
+    if (format === "json") {
+      return c.json({ text: `No memories found matching "${query}".`, memories: [] });
+    }
     return c.json({
       content: [{ type: "text", text: `No memories found matching "${query}".` }],
     });
@@ -281,17 +336,36 @@ memories.get("/recall", async (c) => {
             return `${l.type}:${ref}${lbl}`;
           }).join(", ")}`
         : "";
-      return `**${m.id}** (${m.type})${tagStr}${expStr}\n${m.content}${linkStr}`;
+      const memImages = safeParseJson(m.images, []);
+      const imgStr = memImages.length
+        ? `\nImages: [${memImages.length} image${memImages.length === 1 ? "" : "s"}] ${memImages.map((img) => `/v1/images/${img.key}`).join(", ")}`
+        : "";
+      return `**${m.id}** (${m.type})${tagStr}${expStr}\n${m.content}${linkStr}${imgStr}`;
     })
     .join("\n\n---\n\n");
 
+  const summaryText = `Found ${topResults.length} memor${topResults.length === 1 ? "y" : "ies"}:\n\n${formatted}`;
+
+  if (format === "json") {
+    return c.json({
+      text: summaryText,
+      memories: topResults.map((r) => {
+        const m = r.memory;
+        return {
+          id: m.id,
+          content: m.content,
+          type: m.type,
+          tags: safeParseTags(m.tags),
+          images: safeParseJson(m.images, []),
+          created_at: m.created_at,
+          relevance_score: r.score,
+        };
+      }),
+    });
+  }
+
   return c.json({
-    content: [
-      {
-        type: "text",
-        text: `Found ${topResults.length} memor${topResults.length === 1 ? "y" : "ies"}:\n\n${formatted}`,
-      },
-    ],
+    content: [{ type: "text", text: summaryText }],
   });
 });
 
@@ -395,7 +469,7 @@ memories.get("/:id", async (c) => {
 
   const result = await db.execute({
     sql: `SELECT id, content, type, tags, created_at, expires_at, relevance,
-                 access_count, last_accessed_at, consolidated, consolidated_into, linkages
+                 access_count, last_accessed_at, consolidated, consolidated_into, linkages, images
           FROM memories WHERE id = ?`,
     args: [memoryId],
   });
@@ -405,7 +479,12 @@ memories.get("/:id", async (c) => {
   }
 
   const row = result.rows[0];
-  return c.json({ ...row, tags: safeParseTags(row.tags), linkages: safeParseJson(row.linkages, []) });
+  return c.json({
+    ...row,
+    tags: safeParseTags(row.tags),
+    linkages: safeParseJson(row.linkages, []),
+    images: safeParseJson(row.images, []),
+  });
 });
 
 // PUT /v1/memories/:id — Update memory (partial)
@@ -460,13 +539,18 @@ memories.put("/:id", async (c) => {
   // Return updated
   const result = await db.execute({
     sql: `SELECT id, content, type, tags, created_at, expires_at, relevance,
-                 access_count, last_accessed_at, consolidated, consolidated_into, linkages
+                 access_count, last_accessed_at, consolidated, consolidated_into, linkages, images
           FROM memories WHERE id = ?`,
     args: [memoryId],
   });
 
   const row = result.rows[0];
-  return c.json({ ...row, tags: safeParseTags(row.tags), linkages: safeParseJson(row.linkages, []) });
+  return c.json({
+    ...row,
+    tags: safeParseTags(row.tags),
+    linkages: safeParseJson(row.linkages, []),
+    images: safeParseJson(row.images, []),
+  });
 });
 
 // DELETE /v1/memories/:id — Delete a memory
@@ -475,7 +559,7 @@ memories.delete("/:id", async (c) => {
   const memoryId = c.req.param("id");
 
   const result = await db.execute({
-    sql: "SELECT id FROM memories WHERE id = ?",
+    sql: "SELECT id, images FROM memories WHERE id = ?",
     args: [memoryId],
   });
 
@@ -484,6 +568,14 @@ memories.delete("/:id", async (c) => {
       { content: [{ type: "text", text: "Memory not found." }] },
       404
     );
+  }
+
+  // Clean up R2 images
+  const images = safeParseJson(result.rows[0].images, []);
+  if (images.length > 0 && c.env?.IMAGES) {
+    for (const img of images) {
+      c.env.IMAGES.delete(img.key).catch(() => {});
+    }
   }
 
   await db.execute({

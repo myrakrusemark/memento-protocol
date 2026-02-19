@@ -73,7 +73,7 @@ export async function seedTestData(db) {
  *   const body = await res.json();
  *   h.cleanup();
  */
-export async function createTestHarness() {
+export async function createTestHarness(env) {
   const db = await createTestDb();
   const seed = await seedTestData(db);
 
@@ -101,7 +101,7 @@ export async function createTestHarness() {
     }
 
     const req = new Request(url, init);
-    return app.request(req);
+    return env ? app.request(req, undefined, env) : app.request(req);
   }
 
   function cleanup() {

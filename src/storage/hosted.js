@@ -99,26 +99,44 @@ export class HostedStorageAdapter extends StorageInterface {
     return { _raw: true, text, isError: false };
   }
 
-  async storeMemory(_wsPath, { content, tags, type, expires, linkages }) {
+  async storeMemory(_wsPath, { content, tags, type, expires, linkages, images }) {
     const body = { content, tags, type, expires };
     if (linkages) body.linkages = linkages;
+    if (images) body.images = images;
     const { text, isError } = await this._fetch("POST", "/v1/memories", body);
     if (isError) return { error: text };
     return { _raw: true, text, isError: false };
   }
 
   async recallMemories(_wsPath, { query, tags, type, limit }) {
-    const params = new URLSearchParams({ query });
+    const params = new URLSearchParams({ query, format: "json" });
     if (tags?.length) params.set("tags", tags.join(","));
     if (type) params.set("type", type);
     if (limit) params.set("limit", String(limit));
 
-    const { text, isError } = await this._fetch(
+    const json = await this._fetchJson(
       "GET",
       `/v1/memories/recall?${params}`
     );
-    if (isError) return { error: text };
-    return { _raw: true, text, isError: false };
+    if (json.error) return { error: json.error };
+    return { _raw: true, text: json.text, memories: json.memories || [], isError: false };
+  }
+
+  async getMemory(id) {
+    return this._fetchJson("GET", `/v1/memories/${id}`);
+  }
+
+  async fetchImage(imageKey) {
+    const url = `${this.apiUrl}/v1/images/${imageKey}`;
+    const res = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "X-Memento-Workspace": this.workspace,
+      },
+    });
+    if (!res.ok) return null;
+    const buffer = await res.arrayBuffer();
+    return Buffer.from(buffer).toString("base64");
   }
 
   async addSkip(_wsPath, { item, reason, expires }) {

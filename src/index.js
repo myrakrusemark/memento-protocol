@@ -12,6 +12,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { HostedStorageAdapter } from "./storage/hosted.js";
 
@@ -197,9 +198,30 @@ Use tags generously — they power recall. Set expiration for time-sensitive fac
       )
       .optional()
       .describe("Links to other memories, items, or vault files"),
+    image_path: z
+      .string()
+      .optional()
+      .describe("Local file path to an image to attach to this memory (jpeg, png, gif, webp)"),
   },
-  async ({ content, tags, type, expires, linkages }) => {
-    const result = await storage.storeMemory(null, { content, tags, type, expires, linkages });
+  async ({ content, tags, type, expires, linkages, image_path }) => {
+    let images;
+    if (image_path) {
+      const MIME_MAP = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp" };
+      const ext = path.extname(image_path).toLowerCase();
+      const mimetype = MIME_MAP[ext];
+      if (!mimetype) {
+        return {
+          content: [{ type: "text", text: `Unsupported image format: ${ext}. Allowed: .jpg, .jpeg, .png, .gif, .webp` }],
+          isError: true,
+        };
+      }
+      const buffer = fs.readFileSync(image_path);
+      const data = buffer.toString("base64");
+      const filename = path.basename(image_path);
+      images = [{ data, filename, mimetype }];
+    }
+
+    const result = await storage.storeMemory(null, { content, tags, type, expires, linkages, images });
 
     if (result._raw) {
       return {
@@ -275,6 +297,95 @@ Results are ranked by relevance (keyword match + recency + access frequency). Ea
         },
       ],
     };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: memento_view_image
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "memento_view_image",
+  `View an image attached to a memory. Use after memento_recall shows a memory has images (look for "Images: [N image(s)]" in results). Returns the image directly in context.
+
+Typical flow: memento_recall → see "Images: [2 images]" on a result → memento_view_image with that memory's ID.`,
+  {
+    memory_id: z.string().describe("The memory ID (from recall results)"),
+    filename: z
+      .string()
+      .optional()
+      .describe(
+        "Specific filename if the memory has multiple images. If omitted, returns the first image."
+      ),
+  },
+  async ({ memory_id, filename }) => {
+    const memory = await storage.getMemory(memory_id);
+
+    if (memory.error) {
+      return {
+        content: [{ type: "text", text: `Error fetching memory ${memory_id}: ${memory.error}` }],
+        isError: true,
+      };
+    }
+
+    const images = memory.images || [];
+    if (images.length === 0) {
+      return {
+        content: [{ type: "text", text: `Memory ${memory_id} has no images.` }],
+      };
+    }
+
+    const img = filename
+      ? images.find((i) => i.filename === filename)
+      : images[0];
+
+    if (!img) {
+      const available = images.map((i) => i.filename).join(", ");
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Image "${filename}" not found on memory ${memory_id}. Available: ${available}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+    if (img.size > MAX_IMAGE_BYTES) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Image "${img.filename}" is too large (${(img.size / 1024 / 1024).toFixed(1)}MB, max 5MB).`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    try {
+      const base64 = await storage.fetchImage(img.key);
+      if (!base64) {
+        return {
+          content: [{ type: "text", text: `Failed to fetch image "${img.filename}" from storage.` }],
+          isError: true,
+        };
+      }
+
+      return {
+        content: [
+          { type: "text", text: `Image from memory ${memory_id}: ${img.filename}` },
+          { type: "image", data: base64, mimeType: img.mimetype },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [{ type: "text", text: `Error fetching image: ${err.message}` }],
+        isError: true,
+      };
+    }
   }
 );
 
@@ -707,7 +818,6 @@ async function main() {
 
 // Start the server when run directly (not when imported for testing)
 // Use fs.realpathSync to resolve npm bin symlinks
-import fs from "node:fs";
 const isMainModule =
   process.argv[1] &&
   fs.realpathSync(path.resolve(process.argv[1])) ===

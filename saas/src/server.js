@@ -25,6 +25,7 @@ import context from "./routes/context.js";
 import health from "./routes/health.js";
 import admin from "./routes/admin.js";
 import distill from "./routes/distill.js";
+import images from "./routes/images.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 
 export function createApp() {
@@ -67,6 +68,7 @@ export function createApp() {
   v1.route("/health", health);
   v1.route("/admin", admin);
   v1.route("/distill", distill);
+  v1.route("/images", images);
 
   app.route("/v1", v1);
 
