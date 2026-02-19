@@ -89,17 +89,23 @@ On session start:
 2. `memento_item_list` — check active work items and their next actions
 3. `memento_recall` with current task context — find relevant past memories
 
-Writing memories:
+During work — actively manage your own memories:
+- `memento_store` when you learn something, make a decision, or discover a pattern
+- `memento_recall` before starting any subtask — someone may have already figured it out
+- `memento_item_update` as you make progress — don't wait until the end
+- `memento_item_create` when new work emerges
+- `memento_skip_add` the moment you hit a dead end (with expiry)
+- `memento_consolidate` when recall returns 3+ overlapping memories on the same topic
+- Delete or archive items that are done or wrong — stale memory is worse than no memory
+
+Writing discipline:
 - Instructions, not logs: "API moved to /v2 — update all calls" not "checked API, got 404"
 - Tag generously — tags power recall and consolidation
 - Set expiration on time-sensitive facts
-- Use `memento_skip_add` for things to actively avoid (with expiry)
-- Use `memento_item_create` for structured work tracking with next actions
+- The test: could a future you, with zero context, read this and know exactly what to do?
 
-Before session ends:
-- `memento_item_update` with progress on active work (include what was done AND what comes next)
-- `memento_store` for new decisions and discoveries
-- `memento_skip_add` for things to skip next time
+Your memories are yours. Create, update, and delete them whenever the work demands it —
+not just at session boundaries.
 ```
 
 ---
