@@ -104,48 +104,53 @@ Before session ends:
 
 ---
 
+## The Protocol
+
+Installing Memento gives your agent memory. *The Protocol* is the system you build around it — orientation after context loss, automatic recall, writing discipline, distillation before context resets, identity that persists across sessions.
+
+Full guide: **[The Protocol](https://hifathom.com/projects/memento/protocol)** on hifathom.com.
+
 ## Hooks
 
-Hooks automate memory at session boundaries — the agent doesn't need to remember to recall or save. Two production-ready scripts are included in `scripts/`.
+Hooks automate memory at session boundaries — recall on every message, distillation before context loss. Three production-ready scripts are included in `scripts/`.
 
-### Setup
-
-1. **Create a `.env` file** in the repo root (copy from the example):
+**Quick setup:**
 
 ```bash
-cp .env.example .env
-# Then edit .env with your actual API key and workspace name
+cp .env.example .env    # add your API key and workspace
+chmod +x scripts/*.sh   # make scripts executable
 ```
 
-The `.env` file is gitignored. It needs three variables:
-
-```bash
-MEMENTO_API_KEY=mp_live_your_key_here
-MEMENTO_API_URL=https://memento-api.myrakrusemark.workers.dev
-MEMENTO_WORKSPACE=my-project
-```
-
-2. **Make scripts executable** (they should already be, but just in case):
-
-```bash
-chmod +x scripts/*.sh
-```
-
-3. **Register in Claude Code settings** — add to `.claude/settings.json` (project-level) or `~/.claude/settings.json` (global):
+Then register in `.claude/settings.json` (project-level) or `~/.claude/settings.json` (global):
 
 ```json
 {
   "hooks": {
     "UserPromptSubmit": [
       {
-        "command": "/path/to/memento-protocol/scripts/memento-memory-recall.sh",
-        "timeout": 5000
+        "hooks": [{
+          "type": "command",
+          "command": "/path/to/memento-protocol/scripts/memento-userprompt-recall.sh",
+          "timeout": 5000
+        }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{
+          "type": "command",
+          "command": "/path/to/memento-protocol/scripts/memento-stop-recall.sh",
+          "timeout": 5000
+        }]
       }
     ],
     "PreCompact": [
       {
-        "command": "/path/to/memento-protocol/scripts/memento-precompact-distill.sh",
-        "timeout": 30000
+        "hooks": [{
+          "type": "command",
+          "command": "/path/to/memento-protocol/scripts/memento-precompact-distill.sh",
+          "timeout": 30000
+        }]
       }
     ]
   }
@@ -154,23 +159,13 @@ chmod +x scripts/*.sh
 
 Replace `/path/to/memento-protocol` with the actual absolute path to your clone.
 
-### `memento-memory-recall.sh` (UserPromptSubmit)
+| Script | Event | What it does |
+|--------|-------|-------------|
+| `memento-userprompt-recall.sh` | UserPromptSubmit | Recalls memories relevant to the user's message |
+| `memento-stop-recall.sh` | Stop | Recalls memories from the assistant's own output (autonomous work) |
+| `memento-precompact-distill.sh` | PreCompact | Extracts memories from the conversation before context compression |
 
-Fires before every agent response. Sends the user's message to the `/v1/context` endpoint, which returns relevant memories and skip list warnings.
-
-- **Timeout:** 5 seconds (3s API call + overhead)
-- **User sees:** "Memento Recall: N memories" in their terminal
-- **Model sees:** Full memory details and skip list warnings as injected context (via `additionalContext`)
-- **Short messages:** Messages under 10 characters are skipped (greetings, "yes", etc.)
-
-### `memento-precompact-distill.sh` (PreCompact)
-
-Fires before Claude Code compresses the conversation. Parses the full JSONL transcript into readable text, then sends it to `/v1/distill` which extracts key memories, decisions, and observations — so nothing important is lost to compaction.
-
-- **Timeout:** 30 seconds (transcript processing is heavier)
-- **User sees:** "Memento Distill: extracted N memories" in their terminal
-- **Transcript parsing:** Uses a dedicated parser script if available at `/data/Dropbox/Work/fathom/infrastructure/fathom-mcp/scripts/parse-transcript.sh`. Falls back to direct JSONL extraction (works everywhere, just less polished formatting).
-- **Minimum threshold:** Transcripts under 200 characters are skipped.
+See **[scripts/README.md](scripts/README.md)** for detailed documentation on each script, output formats, and how to write your own hooks.
 
 ---
 
@@ -185,6 +180,7 @@ Browse and manage memories visually at [hifathom.com/dashboard](https://hifathom
 Full reference docs at [hifathom.com/projects/memento](https://hifathom.com/projects/memento):
 
 - **[Quick Start](https://hifathom.com/projects/memento/quick-start)** — 5-minute setup guide
+- **[The Protocol](https://hifathom.com/projects/memento/protocol)** — orientation, recall hooks, writing discipline, distillation, identity
 - **[Core Concepts](https://hifathom.com/projects/memento/concepts)** — memories, working memory, skip lists, identity crystals
 - **[MCP Tools](https://hifathom.com/projects/memento/mcp-tools)** — full tool reference with parameters and examples
 - **[API Reference](https://hifathom.com/projects/memento/api)** — REST endpoints, request/response schemas, authentication

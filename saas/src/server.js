@@ -31,6 +31,15 @@ import { registerAuthRoutes } from "./routes/auth.js";
 export function createApp() {
   const app = new Hono();
 
+  // Global error handler — surface actual error messages
+  app.onError((err, c) => {
+    console.error("Unhandled error:", err);
+    return c.json(
+      { content: [{ type: "text", text: `Server error: ${err.message}` }] },
+      500
+    );
+  });
+
   // CORS — allow dashboard at hifathom.com
   app.use(
     "*",

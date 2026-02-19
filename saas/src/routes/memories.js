@@ -578,14 +578,14 @@ memories.delete("/:id", async (c) => {
     }
   }
 
+  // Clean up access logs FIRST (FK: access_log.memory_id → memories.id)
   await db.execute({
-    sql: "DELETE FROM memories WHERE id = ?",
+    sql: "DELETE FROM access_log WHERE memory_id = ?",
     args: [memoryId],
   });
 
-  // Clean up access logs
   await db.execute({
-    sql: "DELETE FROM access_log WHERE memory_id = ?",
+    sql: "DELETE FROM memories WHERE id = ?",
     args: [memoryId],
   });
 
