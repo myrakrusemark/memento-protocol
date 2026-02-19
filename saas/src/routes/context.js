@@ -124,7 +124,7 @@ context.post("/", async (c) => {
           const memRow = await db.execute({
             sql: `SELECT id, content, type, tags, created_at, expires_at,
                          access_count, last_accessed_at, linkages
-                  FROM memories WHERE id = ?`,
+                  FROM memories WHERE id = ? AND consolidated = 0`,
             args: [hr.memoryId],
           });
           if (memRow.rows.length > 0) {
