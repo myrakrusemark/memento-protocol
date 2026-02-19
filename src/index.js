@@ -15,27 +15,30 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { HostedStorageAdapter } from "./storage/hosted.js";
+import { resolveConfig } from "./config.js";
 
 const __filename = fileURLToPath(import.meta.url);
 
-// Load .env from the package root (next to package.json)
+// Load .env from the package root first (backward compat)
 dotenvConfig({ path: path.resolve(path.dirname(__filename), "..", ".env") });
 
 // ---------------------------------------------------------------------------
-// Require API credentials
+// Resolve configuration: env vars > .memento.json > .env > defaults
 // ---------------------------------------------------------------------------
 
-if (!process.env.MEMENTO_API_KEY || !process.env.MEMENTO_API_URL) {
+const config = resolveConfig();
+
+if (!config.apiKey) {
   console.error(
-    'Error: MEMENTO_API_KEY is required. Sign up: curl -X POST https://memento-api.myrakrusemark.workers.dev/v1/auth/signup -H \'Content-Type: application/json\' -d \'{"email": "you@example.com"}\''
+    "Error: No API key found. Run `npx memento init` to set up, or set MEMENTO_API_KEY in .env"
   );
   process.exit(1);
 }
 
 const storage = new HostedStorageAdapter({
-  apiKey: process.env.MEMENTO_API_KEY,
-  apiUrl: process.env.MEMENTO_API_URL,
-  workspace: process.env.MEMENTO_WORKSPACE || "default",
+  apiKey: config.apiKey,
+  apiUrl: config.apiUrl,
+  workspace: config.workspace,
 });
 
 // ---------------------------------------------------------------------------

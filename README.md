@@ -4,7 +4,17 @@ Persistent memory for AI agents.
 
 AI agents have anterograde amnesia — every session starts blank. The Memento Protocol gives agents a structured way to remember, not by recording everything, but by writing **instructions to their future selves**. Memories decay, consolidate, and evolve — like biological memory, not a log file.
 
-## Get Started
+## Quick Start
+
+```bash
+npx memento init
+```
+
+This creates `.memento.json`, configures Claude Code hooks, and sets up the MCP server — all in one command. Restart Claude Code to load the new config.
+
+---
+
+## Manual Setup
 
 ```bash
 git clone https://github.com/myrakrusemark/memento-protocol.git

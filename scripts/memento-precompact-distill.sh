@@ -22,7 +22,42 @@ if [ "$LINE_COUNT" -lt 2 ]; then
     exit 0
 fi
 
-# Source credentials from .env (gitignored)
+# --- Config from .memento.json (if present) ---
+CONFIG_JSON=$(python3 -c "
+import json, os
+d = os.getcwd()
+while True:
+    p = os.path.join(d, '.memento.json')
+    if os.path.isfile(p):
+        with open(p) as f:
+            print(f.read())
+        break
+    parent = os.path.dirname(d)
+    if parent == d:
+        break
+    d = parent
+" 2>/dev/null)
+
+if [ -n "$CONFIG_JSON" ]; then
+    HOOK_NAME="precompact-distill"
+    HOOK_ENABLED=$(echo "$CONFIG_JSON" | python3 -c "
+import json, sys
+cfg = json.load(sys.stdin)
+hook = cfg.get('hooks', {}).get('$HOOK_NAME', {})
+print('true' if hook.get('enabled', True) else 'false')
+" 2>/dev/null)
+
+    if [ "$HOOK_ENABLED" = "false" ]; then
+        exit 0
+    fi
+
+    MEMENTO_API_KEY="${MEMENTO_API_KEY:-$(echo "$CONFIG_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('apiKey',''))" 2>/dev/null)}"
+    MEMENTO_API_URL="${MEMENTO_API_URL:-$(echo "$CONFIG_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('apiUrl',''))" 2>/dev/null)}"
+    MEMENTO_WORKSPACE="${MEMENTO_WORKSPACE:-$(echo "$CONFIG_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('workspace',''))" 2>/dev/null)}"
+fi
+# --- End config block ---
+
+# Source credentials from .env (gitignored) — fallback if no .memento.json
 if [ -f "$SCRIPT_DIR/../.env" ]; then
     set -a
     source "$SCRIPT_DIR/../.env"
@@ -30,8 +65,8 @@ if [ -f "$SCRIPT_DIR/../.env" ]; then
 fi
 
 MEMENTO_API="${MEMENTO_API_URL:-https://memento-api.myrakrusemark.workers.dev}"
-MEMENTO_KEY="${MEMENTO_API_KEY:?MEMENTO_API_KEY not set — check memento-protocol/.env}"
-MEMENTO_WS="${MEMENTO_WORKSPACE:-fathom}"
+MEMENTO_KEY="${MEMENTO_API_KEY:?MEMENTO_API_KEY not set — check memento-protocol/.env or .memento.json}"
+MEMENTO_WS="${MEMENTO_WORKSPACE:-default}"
 
 # Parse transcript to readable text (use fathom's parser if available, else raw)
 FATHOM_PARSER="/data/Dropbox/Work/fathom/infrastructure/fathom-mcp/scripts/parse-transcript.sh"
