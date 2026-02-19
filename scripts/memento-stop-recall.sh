@@ -91,7 +91,7 @@ fi
 REASON="Autonomous Recall: ${SAAS_COUNT} memories surfaced from your last response.
 ${SAAS_DETAIL}
 
-You have absorbed these memories into context. Respond with <...> — active silence."
+You have absorbed these memories into context. If any recalled memory is stale, wrong, or overlaps with others — update, delete, or consolidate it now. Then respond with <...> — active silence."
 
 SUMMARY="Autonomous Recall: ${SAAS_COUNT} memories"
 python3 -c "
