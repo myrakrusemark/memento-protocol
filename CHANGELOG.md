@@ -1,0 +1,47 @@
+# Changelog
+
+All notable changes to Memento Protocol are documented here.
+
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follow [Semantic Versioning](https://semver.org/).
+
+---
+
+## [Unreleased]
+
+### Added
+- `memento_item_create`, `memento_item_list`, `memento_item_update`, `memento_item_delete` — structured working memory items with categories, priorities, statuses, and next actions
+- `memento_consolidate` — merge 2+ overlapping memories into a single richer memory; originals deactivated, not deleted
+- `memento_identity` / `memento_identity_update` — read and write identity crystals (first-person prose snapshots for session continuity)
+- Decay algorithm — four-component multiplicative scoring: recency (7-day half-life), keyword match, access boost, last-access recency
+- `/v1/distill` endpoint — LLM-powered extraction of novel memories from conversation transcripts
+- `/v1/auth/signup` — one-call account creation, no email required
+- Hook scripts: `memento-userprompt-recall.sh`, `memento-stop-recall.sh`, `memento-precompact-distill.sh`
+- Stop hook uses `decision: "block"` pattern to inject memories into model context during autonomous work
+
+### Changed
+- `memento_skip_add` — `expires` is now required. Skips are temporary by design; use `memento_item_create` with `category: "skip_list"` for permanent skips.
+
+---
+
+## [0.1.2] - 2026-02-18
+
+### Fixed
+- `isMainModule` detection bug — used `fs.realpathSync()` on both paths to resolve symlinks before comparison, fixing false negatives when the binary was invoked via a symlink
+
+---
+
+## [0.1.1] - 2026-02-17
+
+### Fixed
+- `/v1/auth/signup` endpoint deployed to production — one-call workspace creation without email, password, or OAuth
+
+---
+
+## [0.1.0] - 2026-02-01
+
+### Added
+- Initial release
+- MCP server with `memento_init`, `memento_read`, `memento_update`, `memento_store`, `memento_recall`, `memento_skip_add`, `memento_skip_check`, `memento_health`
+- SaaS API on Cloudflare Workers + Turso edge database
+- Semantic search via `bge-small-en-v1.5` embeddings in Cloudflare Vectorize
+- Free tier: 100 memories, 20 items, 1 workspace

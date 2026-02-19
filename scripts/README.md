@@ -2,18 +2,17 @@
 
 Automation hooks for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that connect the Memento API to session lifecycle events. These scripts make memory automatic — recall on every message, distillation before context loss.
 
-## Naming Convention
+## Naming convention
 
-Scripts follow the pattern `[system]-[hook]-[verb].sh`:
+Hook scripts follow the pattern `[system]-[hook]-[verb].sh`:
 
 | Script | Event | What it does |
 |--------|-------|-------------|
 | `memento-userprompt-recall.sh` | UserPromptSubmit | Recall memories relevant to the user's message |
 | `memento-stop-recall.sh` | Stop | Recall memories relevant to the assistant's own output |
 | `memento-precompact-distill.sh` | PreCompact | Extract memories from the conversation before context compression |
-| `launch-stats.sh` | (manual) | Quick metrics — GitHub stars, npm downloads, signups |
 
-## Setup
+## Set up hooks
 
 ### 1. Create a `.env` file
 
@@ -79,7 +78,7 @@ Replace `/path/to/memento-protocol` with the actual absolute path to your clone.
 
 ---
 
-## Script Details
+## Script details
 
 ### `memento-userprompt-recall.sh` — UserPromptSubmit
 
@@ -121,7 +120,7 @@ Fires before Claude Code compresses the conversation. Parses the full JSONL tran
 
 ---
 
-## Hook Output Formats
+## Hook output formats
 
 Claude Code hooks can output data in several formats. These scripts use two:
 
@@ -133,7 +132,19 @@ Claude Code hooks can output data in several formats. These scripts use two:
 
 The `additionalContext` approach only works for UserPromptSubmit, PreToolUse, and PostToolUse events. For Stop hooks, the `decision: "block"` pattern is the only mechanism that injects content into model context.
 
-## Adding Your Own Hooks
+---
+
+## Utilities
+
+`launch-stats.sh` is not a hook — it's a standalone utility script. Run it manually to get quick metrics:
+
+```bash
+./scripts/launch-stats.sh   # GitHub stars, npm downloads, API signups
+```
+
+---
+
+## Add your own hooks
 
 Follow the naming convention: `[system]-[hook]-[verb].sh`. Your script receives JSON on stdin with event-specific fields:
 

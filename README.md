@@ -63,7 +63,7 @@ The MCP server connects at startup. Restart so it picks up the new config.
 
 ### Step 4: First session
 
-```
+```text
 > memento_health()              # verify connection
 > memento_store(                # store your first memory
     content: "API uses /v2 endpoints. Auth is Bearer token in header.",
@@ -118,52 +118,7 @@ Full guide: **[The Protocol](https://hifathom.com/projects/memento/protocol)** o
 
 ## Hooks
 
-Hooks automate memory at session boundaries — recall on every message, distillation before context loss. Three production-ready scripts are included in `scripts/`.
-
-**Quick setup:**
-
-```bash
-cp .env.example .env    # add your API key and workspace
-chmod +x scripts/*.sh   # make scripts executable
-```
-
-Then register in `.claude/settings.json` (project-level) or `~/.claude/settings.json` (global):
-
-```json
-{
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [{
-          "type": "command",
-          "command": "/path/to/memento-protocol/scripts/memento-userprompt-recall.sh",
-          "timeout": 5000
-        }]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [{
-          "type": "command",
-          "command": "/path/to/memento-protocol/scripts/memento-stop-recall.sh",
-          "timeout": 5000
-        }]
-      }
-    ],
-    "PreCompact": [
-      {
-        "hooks": [{
-          "type": "command",
-          "command": "/path/to/memento-protocol/scripts/memento-precompact-distill.sh",
-          "timeout": 30000
-        }]
-      }
-    ]
-  }
-}
-```
-
-Replace `/path/to/memento-protocol` with the actual absolute path to your clone.
+Hooks automate memory at session boundaries — recall on every message, distillation before context loss. Three production-ready scripts are included in `scripts/`:
 
 | Script | Event | What it does |
 |--------|-------|-------------|
@@ -171,7 +126,7 @@ Replace `/path/to/memento-protocol` with the actual absolute path to your clone.
 | `memento-stop-recall.sh` | Stop | Recalls memories from the assistant's own output (autonomous work) |
 | `memento-precompact-distill.sh` | PreCompact | Extracts memories from the conversation before context compression |
 
-See **[scripts/README.md](scripts/README.md)** for detailed documentation on each script, output formats, and how to write your own hooks.
+See **[scripts/README.md](scripts/README.md)** for setup, configuration, and how to write your own hooks.
 
 ---
 

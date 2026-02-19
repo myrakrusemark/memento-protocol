@@ -27,3 +27,6 @@ coverage/
 *.sync-conflict-*
 .npmrc
 .mcpregistry_github_token
+
+# Smithery build artifacts
+.smithery/
