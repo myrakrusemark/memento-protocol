@@ -2,7 +2,7 @@
 
 /**
  * Memento Protocol — Interactive setup wizard.
- * Usage: npx memento init
+ * Usage: npx memento-mcp init
  */
 
 import readline from "node:readline";
@@ -140,7 +140,14 @@ async function runInit() {
     output: process.stdout,
   });
 
-  console.log("\n  Memento Protocol — Setup Wizard\n");
+  console.log(`
+            ▗
+▛▛▌█▌▛▛▌█▌▛▌▜▘▛▌▄▖▛▛▌▛▘▛▌
+▌▌▌▙▖▌▌▌▙▖▌▌▐▖▙▌  ▌▌▌▙▖▙▌
+                       ▌
+
+  hifathom.com  ·  fathom@myrakrusemark.com
+`);
 
   // 1. Workspace name
   const workspace = await ask(rl, "Workspace name", projectName);
@@ -175,8 +182,16 @@ async function runInit() {
 
   // 3. Features
   console.log("\nOptional features:");
-  const enableImages = await askYesNo(rl, "  Enable image attachments?", false);
-  const enableIdentity = await askYesNo(rl, "  Enable identity crystal?", false);
+  const enableImages = await askYesNo(
+    rl,
+    "  Enable image attachments? (attach images to memories via memento_store)",
+    false,
+  );
+  const enableIdentity = await askYesNo(
+    rl,
+    "  Enable identity crystal? (persist a first-person identity snapshot across sessions)",
+    false,
+  );
 
   // 4. Hooks
   console.log("\nClaude Code hooks (automate recall + distillation):");
@@ -216,12 +231,30 @@ async function runInit() {
   writeJsonFile(configPath, config);
   created.push(".memento.json");
 
-  // 6. Resolve hook script paths relative to this package
-  const scriptsDir = path.resolve(__dirname, "..", "scripts");
-
-  // 7. Write .claude/settings.local.json (hooks)
+  // 6. Copy hook scripts into .memento/scripts/ for stable paths
+  //    (pointing into the npx cache would break on cache clear or update)
   const anyHookEnabled = enableUserPrompt || enableStop || enablePreCompact;
   if (anyHookEnabled) {
+    const pkgScriptsDir = path.resolve(__dirname, "..", "scripts");
+    const localScriptsDir = path.join(cwd, ".memento", "scripts");
+    if (!fs.existsSync(localScriptsDir))
+      fs.mkdirSync(localScriptsDir, { recursive: true });
+
+    const scriptFiles = [
+      enableUserPrompt && "memento-userprompt-recall.sh",
+      enableStop && "memento-stop-recall.sh",
+      enablePreCompact && "memento-precompact-distill.sh",
+    ].filter(Boolean);
+
+    for (const name of scriptFiles) {
+      const src = path.join(pkgScriptsDir, name);
+      const dest = path.join(localScriptsDir, name);
+      fs.copyFileSync(src, dest);
+      fs.chmodSync(dest, 0o755);
+    }
+    created.push(".memento/scripts/");
+
+    // 7. Write .claude/settings.local.json (hooks)
     const hooks = {};
     if (enableUserPrompt) {
       hooks.UserPromptSubmit = [
@@ -229,7 +262,7 @@ async function runInit() {
           hooks: [
             {
               type: "command",
-              command: path.join(scriptsDir, "memento-userprompt-recall.sh"),
+              command: path.join(localScriptsDir, "memento-userprompt-recall.sh"),
               timeout: 5000,
             },
           ],
@@ -242,7 +275,7 @@ async function runInit() {
           hooks: [
             {
               type: "command",
-              command: path.join(scriptsDir, "memento-stop-recall.sh"),
+              command: path.join(localScriptsDir, "memento-stop-recall.sh"),
               timeout: 5000,
             },
           ],
@@ -255,7 +288,7 @@ async function runInit() {
           hooks: [
             {
               type: "command",
-              command: path.join(scriptsDir, "memento-precompact-distill.sh"),
+              command: path.join(localScriptsDir, "memento-precompact-distill.sh"),
               timeout: 30000,
             },
           ],
@@ -280,18 +313,58 @@ async function runInit() {
   });
   created.push(".mcp.json");
 
-  // 9. Add .memento.json to .gitignore
-  if (appendToGitignore(cwd, ".memento.json")) {
-    created.push(".gitignore (updated)");
-  }
+  // 9. Add .memento.json and .memento/scripts/ to .gitignore
+  let gitignoreUpdated = false;
+  if (appendToGitignore(cwd, ".memento.json")) gitignoreUpdated = true;
+  if (appendToGitignore(cwd, ".memento/scripts/")) gitignoreUpdated = true;
+  if (gitignoreUpdated) created.push(".gitignore (updated)");
 
   // 10. Summary
-  console.log("\n  Setup complete!\n");
+  const labels = {
+    ".memento.json": "workspace config + credentials",
+    ".memento/scripts/": "hook scripts (recall + distillation)",
+    ".claude/settings.local.json": "hooks registered with Claude Code",
+    ".mcp.json": "MCP server registered",
+    ".gitignore (updated)": "credentials excluded from git",
+  };
+  const colWidth = Math.max(...created.map((f) => f.length)) + 2;
+  console.log("\n  ✓ Memento is live.\n");
   console.log("  Created:");
   for (const f of created) {
-    console.log(`    - ${f}`);
+    const label = labels[f] || "";
+    console.log(`    ${f.padEnd(colWidth)}${label}`);
   }
-  console.log("\n  Restart Claude Code to load the MCP server and hooks.\n");
+  console.log("\n  Restart Claude Code to activate.");
+  console.log("  Your agent will wake up remembering.\n");
+
+  // 11. CLAUDE.md boilerplate
+  console.log("─".repeat(60));
+  console.log(`
+  One more step: paste the following into your CLAUDE.md,
+  or hand it to Claude and ask it to add it. This teaches
+  your agent the memory discipline Memento expects.
+
+  ── paste below this line ──────────────────────────────
+
+## Memento Protocol
+
+Working memory is managed by Memento. MCP tools available:
+\`memento_store\`, \`memento_recall\`, \`memento_item_list\`,
+\`memento_skip_add\`, \`memento_skip_check\`.
+
+**Memory discipline — notes are instructions, not logs.**
+Write: "Skip X until condition Y" — not "checked X, it was quiet."
+Every memory must answer: could a future agent with zero context
+read this and know exactly what to do?
+
+Use \`memento_store\` when you learn something worth keeping.
+Use \`memento_skip_add\` for things to explicitly not re-investigate.
+Use \`memento_recall\` to search memories by keyword or tag.
+Hooks run automatically — recall before responses, distillation
+before compaction. Trust the hooks. Focus on writing good memories.
+
+  ── paste above this line ──────────────────────────────
+`);
 }
 
 // ---------------------------------------------------------------------------
@@ -305,15 +378,22 @@ if (args[0] === "init") {
     console.error(err);
     process.exit(1);
   });
+} else if (args.length === 0) {
+  // No args — start the MCP server (this is what .mcp.json invokes)
+  // Must call main() explicitly because the isMainModule guard in index.js
+  // checks process.argv[1] which still points to cli.js, not index.js.
+  const { main } = await import("./index.js");
+  await main();
 } else {
   console.log(`
   Memento Protocol CLI
 
   Usage:
-    npx memento init    Set up Memento in the current project
+    npx memento-mcp init    Set up Memento in the current project
+    npx memento-mcp         Start the MCP server (used by .mcp.json)
 
   This creates .memento.json, configures Claude Code hooks,
   and sets up the MCP server — all in one command.
 `);
-  process.exit(args.length > 0 ? 1 : 0);
+  process.exit(1);
 }
