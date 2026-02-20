@@ -45,8 +45,7 @@ Structured tags:
 - For dates: include a tag like "date:2025-03-03"
 - For specialties/roles: use the formal role tag — "role:principal-investigator", "role:research-assistant", "role:data-analyst". Do NOT invent synonym tags; role synonyms belong in the memory content, not in tags.
 - For measurements: match tags to THIS memory's specific measurement — "wavelength:532nm" for laser wavelength facts, "percentage:15" and "rate:folding-15-percent" for reduction percentage facts, "temperature:25c" for temperature threshold facts
-- Always include "source:distill" as a tag
-- Max 8 tags total (include entity tags + 2-3 topic tags + source:distill)
+- Max 7 tags total (the "source:distill" tag is added automatically; do not include it yourself)
 
 Output format:
 [{"content": "...", "type": "fact", "tags": ["tag1", "tag2"]}]
