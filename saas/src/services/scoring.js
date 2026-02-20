@@ -10,6 +10,21 @@
  */
 
 /**
+ * Common English stop words filtered out of query terms before scoring.
+ * Matches the list used by extractKeywords in routes/context.js.
+ * No minimum-length filter is applied — short numeric identifiers like "62" are preserved.
+ */
+export const STOP_WORDS = new Set([
+  "a", "an", "the", "is", "it", "in", "on", "at", "to", "for",
+  "of", "and", "or", "but", "not", "with", "this", "that", "from",
+  "by", "as", "be", "was", "were", "been", "are", "have", "has",
+  "had", "do", "does", "did", "will", "would", "could", "should",
+  "may", "might", "can", "i", "you", "we", "they", "he", "she",
+  "my", "your", "our", "their", "what", "how", "when", "where",
+  "why", "which", "who", "me", "him", "her", "us", "them",
+]);
+
+/**
  * Parse a JSON tags string into a lowercase array.
  * Returns [] on invalid JSON.
  */
@@ -96,7 +111,13 @@ function lastAccessRecencyScore(lastAccessedAt, now) {
  * @returns {Array<{ memory: object, score: number }>} Sorted by score desc
  */
 export function scoreAndRankMemories(memories, query, now, limit) {
-  const queryTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const rawTerms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const filteredTerms = rawTerms
+    .map((t) => t.replace(/[^\w]/g, ""))
+    .filter((t) => t.length > 0 && !STOP_WORDS.has(t));
+  // Fall back to raw terms when every term is a stop word (vacuous query),
+  // preserving existing behaviour for calls from the decay service.
+  const queryTerms = filteredTerms.length > 0 ? filteredTerms : rawTerms;
 
   const scored = [];
   for (const memory of memories) {

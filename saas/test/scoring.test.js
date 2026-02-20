@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { scoreMemory, scoreAndRankMemories } from "../src/services/scoring.js";
+import { scoreMemory, scoreAndRankMemories, STOP_WORDS } from "../src/services/scoring.js";
 
 /**
  * Helper: build a memory object with sensible defaults.
@@ -225,5 +225,76 @@ describe("scoreAndRankMemories", () => {
 
     const results = scoreAndRankMemories(memories, "xyzzy", now, 10);
     assert.equal(results.length, 0);
+  });
+});
+
+describe("scoreAndRankMemories — stop word filtering", () => {
+  const now = new Date("2026-02-16T12:00:00Z");
+
+  it("filters stop words so trivially-matching memories are excluded", () => {
+    const relevant = makeMemory({
+      content: "lead researcher working on project lumen",
+      created_at: now.toISOString(),
+    });
+    const irrelevant = makeMemory({
+      // Would score via "is"/"the" before the fix; should score 0 after
+      content: "deadline for nature photonics journal",
+      created_at: now.toISOString(),
+    });
+
+    // "who is the lead researcher" → after filtering stop words: ["lead", "researcher"]
+    // relevant: matches both → score > 0
+    // irrelevant: contains neither "lead" nor "researcher" → score = 0 → excluded
+    const results = scoreAndRankMemories(
+      [relevant, irrelevant],
+      "who is the lead researcher",
+      now,
+      10
+    );
+
+    assert.equal(results.length, 1, "stop-word-only matches should be excluded");
+    assert.ok(results[0].memory.content.includes("lead researcher"));
+  });
+
+  it("preserves short numeric terms — no minimum length filter applied", () => {
+    const mem = makeMemory({
+      content: "progress at 62 percent of milestone",
+      created_at: now.toISOString(),
+    });
+
+    // "62 percent complete" → after filtering: ["62", "percent", "complete"]
+    // "62" is 2 chars — must NOT be dropped (no length filter, unlike extractKeywords)
+    // mem matches "62" and "percent" (2 of 3 terms) → score > 0
+    const results = scoreAndRankMemories([mem], "62 percent complete", now, 10);
+    assert.ok(results.length > 0, 'numeric term "62" should be preserved despite length ≤ 2');
+  });
+
+  it("falls back to unfiltered terms when all query terms are stop words", () => {
+    const matchMem = makeMemory({
+      content: "this is it the thing",
+      created_at: now.toISOString(),
+    });
+    const noMatchMem = makeMemory({
+      content: "alpha beta gamma delta",
+      created_at: now.toISOString(),
+    });
+
+    // "is it the" → all stop words → filtered = [] → fallback to raw ["is", "it", "the"]
+    // matchMem contains "is", "it", "the" as substrings → score > 0
+    // noMatchMem has none → score = 0
+    // Without fallback, queryTerms = [] → decay path scores ALL memories (2 results, not 1)
+    const results = scoreAndRankMemories([matchMem, noMatchMem], "is it the", now, 10);
+
+    assert.equal(results.length, 1, "vacuous query should fall back to raw terms, not empty queryTerms");
+    assert.ok(results[0].memory.content.includes("this is it"));
+  });
+
+  it("STOP_WORDS contains expected entries and excludes content words", () => {
+    assert.ok(STOP_WORDS instanceof Set);
+    assert.ok(STOP_WORDS.has("is"), '"is" should be a stop word');
+    assert.ok(STOP_WORDS.has("the"), '"the" should be a stop word');
+    assert.ok(STOP_WORDS.has("who"), '"who" should be a stop word');
+    assert.ok(!STOP_WORDS.has("researcher"), '"researcher" should not be a stop word');
+    assert.ok(!STOP_WORDS.has("lumen"), '"lumen" should not be a stop word');
   });
 });
