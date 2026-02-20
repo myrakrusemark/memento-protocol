@@ -177,7 +177,7 @@ distill.post("/", async (c) => {
     const id = randomUUID().slice(0, 8);
     const type = VALID_TYPES.has(entry.type) ? entry.type : "observation";
     const entryTags = Array.isArray(entry.tags)
-      ? entry.tags.filter((t) => typeof t === "string").map((t) => t.toLowerCase()).slice(0, 3)
+      ? entry.tags.filter((t) => typeof t === "string").map((t) => t.toLowerCase()).slice(0, 7)
       : [];
     const tags = JSON.stringify([...entryTags, "source:distill"]);
 
