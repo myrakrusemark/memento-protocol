@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { scoreMemory, scoreAndRankMemories, STOP_WORDS } from "../src/services/scoring.js";
+import { scoreMemory, scoreAndRankMemories, STOP_WORDS, shouldAbstain } from "../src/services/scoring.js";
 
 /**
  * Helper: build a memory object with sensible defaults.
@@ -296,5 +296,38 @@ describe("scoreAndRankMemories — stop word filtering", () => {
     assert.ok(STOP_WORDS.has("who"), '"who" should be a stop word');
     assert.ok(!STOP_WORDS.has("researcher"), '"researcher" should not be a stop word');
     assert.ok(!STOP_WORDS.has("lumen"), '"lumen" should not be a stop word');
+  });
+});
+
+describe("shouldAbstain", () => {
+  it("returns false when no specific terms (all short or stop words)", () => {
+    const candidates = [makeMemory({ content: "the sky is blue" })];
+    // "who" and "is" are stop words; "sky" is only 3 chars — below MIN_SPECIFIC_LENGTH=11
+    const result = shouldAbstain(candidates, "who is the sky");
+    assert.equal(result, false);
+  });
+
+  it("returns false when the specific term appears in at least one memory", () => {
+    const candidates = [
+      makeMemory({ content: "crystallography is studied in materials science" }),
+    ];
+    // "crystallography" is 15 chars and appears in the candidate
+    const result = shouldAbstain(candidates, "crystallography methods");
+    assert.equal(result, false);
+  });
+
+  it("returns true when an 11+ char term appears in zero memories", () => {
+    const candidates = [
+      makeMemory({ content: "photosynthesis happens in plants" }),
+    ];
+    // "crystallography" is 15 chars and appears in NONE of the candidates
+    const result = shouldAbstain(candidates, "crystallography");
+    assert.equal(result, true);
+  });
+
+  it("returns false when candidates is empty and there are no specific terms", () => {
+    // No candidates, and all terms are short/stop-words → no specific terms → false
+    const result = shouldAbstain([], "who is the sky");
+    assert.equal(result, false);
   });
 });

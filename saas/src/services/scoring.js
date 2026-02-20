@@ -25,6 +25,49 @@ export const STOP_WORDS = new Set([
 ]);
 
 /**
+ * Zero-match abstention check.
+ *
+ * If ANY non-stop-word query term that is >= 11 characters long appears in
+ * ZERO candidate memories, the query is asking about a concept entirely absent
+ * from storage — signal abstention.
+ *
+ * This catches hallucination traps like asking about "crystallography" when
+ * no stored memory mentions it, while leaving short relational words like
+ * "researcher" (10 chars) safe from false abstention.
+ *
+ * @param {object[]} candidates - Memory row objects (with content + tags)
+ * @param {string} query - Raw query string
+ * @returns {boolean} true = abstain (return empty), false = proceed normally
+ */
+const MIN_SPECIFIC_LENGTH = 11;
+
+export function shouldAbstain(candidates, query) {
+  const rawTerms = query
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+
+  const specificTerms = rawTerms.filter(
+    (t) => !STOP_WORDS.has(t) && t.length >= MIN_SPECIFIC_LENGTH
+  );
+
+  if (specificTerms.length === 0) return false;
+
+  for (const term of specificTerms) {
+    const anyMatch = candidates.some((memory) => {
+      const contentLower = (memory.content || "").toLowerCase();
+      const tags = parseTags(memory.tags);
+      const searchable = contentLower + " " + tags.join(" ");
+      return searchable.includes(term);
+    });
+    if (!anyMatch) return true;
+  }
+
+  return false;
+}
+
+/**
  * Parse a JSON tags string into a lowercase array.
  * Returns [] on invalid JSON.
  */

@@ -14,7 +14,7 @@
 
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
-import { scoreAndRankMemories } from "../services/scoring.js";
+import { scoreAndRankMemories, shouldAbstain } from "../services/scoring.js";
 import { embedAndStore, removeVector } from "../services/embeddings.js";
 import { traverseGraph, getRelated } from "../services/graph.js";
 import { getLimits } from "../config/plans.js";
@@ -260,6 +260,7 @@ memories.get("/recall", async (c) => {
   const typeParam = c.req.query("type");
   const limitParam = parseInt(c.req.query("limit") || "10", 10);
   const format = c.req.query("format");
+  const trackAccess = c.req.query("track_access") !== "false";
 
   if (!query) {
     return c.json(
@@ -307,6 +308,17 @@ memories.get("/recall", async (c) => {
     candidates.push(row);
   }
 
+  // Zero-match abstention: if a specific query term is entirely absent from storage,
+  // return empty rather than returning a hallucinated best-match.
+  if (shouldAbstain(candidates, query)) {
+    if (format === "json") {
+      return c.json({ text: `No memories found matching "${query}".`, memories: [] });
+    }
+    return c.json({
+      content: [{ type: "text", text: `No memories found matching "${query}".` }],
+    });
+  }
+
   // Score and rank using the scoring service
   const scored = scoreAndRankMemories(candidates, query, new Date(), limit);
 
@@ -328,16 +340,18 @@ memories.get("/recall", async (c) => {
   }
 
   // Log access for decay tracking (fire-and-forget)
-  for (const r of topResults) {
-    db.execute({
-      sql: `INSERT INTO access_log (memory_id, query) VALUES (?, ?)`,
-      args: [r.memory.id, query],
-    }).catch(() => {});
+  if (trackAccess) {
+    for (const r of topResults) {
+      db.execute({
+        sql: `INSERT INTO access_log (memory_id, query) VALUES (?, ?)`,
+        args: [r.memory.id, query],
+      }).catch(() => {});
 
-    db.execute({
-      sql: `UPDATE memories SET access_count = access_count + 1, last_accessed_at = datetime('now') WHERE id = ?`,
-      args: [r.memory.id],
-    }).catch(() => {});
+      db.execute({
+        sql: `UPDATE memories SET access_count = access_count + 1, last_accessed_at = datetime('now') WHERE id = ?`,
+        args: [r.memory.id],
+      }).catch(() => {});
+    }
   }
 
   const formatted = topResults

@@ -233,3 +233,60 @@ describe("GET /v1/memories/recall — recall_threshold setting", () => {
     assert.ok(body.content[0].text.includes("No memories found"), "partial-match memory should be filtered by strict threshold=1.0");
   });
 });
+
+// ---------------------------------------------------------------------------
+// track_access query param
+// ---------------------------------------------------------------------------
+
+describe("GET /v1/memories/recall — track_access param", () => {
+  beforeEach(async () => {
+    h = await createTestHarness();
+  });
+
+  afterEach(() => {
+    h.cleanup();
+  });
+
+  it("?track_access=false returns memories but does NOT increment access_count", async () => {
+    // Store a memory
+    await h.request("POST", "/v1/memories", { content: "trackable memory content" });
+
+    // Recall with track_access=false
+    const recallRes = await h.request("GET", "/v1/memories/recall?query=trackable+memory+content&track_access=false&format=json");
+    assert.equal(recallRes.status, 200);
+    const recallBody = await recallRes.json();
+    assert.ok(recallBody.memories.length > 0, "should still return matching memories");
+
+    const memId = recallBody.memories[0].id;
+
+    // access_count should still be 0
+    const row = await h.db.execute({
+      sql: "SELECT access_count FROM memories WHERE id = ?",
+      args: [memId],
+    });
+    assert.equal(row.rows[0].access_count, 0, "access_count must not be incremented when track_access=false");
+  });
+
+  it("default (no track_access param) does increment access_count", async () => {
+    // Store a memory
+    await h.request("POST", "/v1/memories", { content: "countable memory content" });
+
+    // Recall with default (no track_access param)
+    const recallRes = await h.request("GET", "/v1/memories/recall?query=countable+memory+content&format=json");
+    assert.equal(recallRes.status, 200);
+    const recallBody = await recallRes.json();
+    assert.ok(recallBody.memories.length > 0, "should return matching memories");
+
+    const memId = recallBody.memories[0].id;
+
+    // Give the fire-and-forget DB writes a moment to settle
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // access_count should now be 1
+    const row = await h.db.execute({
+      sql: "SELECT access_count FROM memories WHERE id = ?",
+      args: [memId],
+    });
+    assert.equal(row.rows[0].access_count, 1, "access_count must be incremented on default recall");
+  });
+});
