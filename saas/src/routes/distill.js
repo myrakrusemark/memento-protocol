@@ -34,7 +34,7 @@ Rules:
 Memory writing style:
 - Lead with the most searchable term: entity names, project names, specific identifiers.
 - Preserve exact values verbatim: grant IDs (e.g., "#2401-8827"), amounts (e.g., "$240,000"), measurements (e.g., "532nm"), percentages, and dates (e.g., "March 3, 2025").
-- Include role and relationship vocabulary explicitly: write "Lead researcher Dr. Elena Vasquez specializes in photonics" not "Dr. Elena Vasquez is a specialist" or "The laser work is Elena's domain".
+- Include role and relationship vocabulary explicitly, with the most searchable synonym first: write "Lead researcher and principal investigator Dr. Elena Vasquez" not "Dr. Elena Vasquez is the PI". Include both the formal title and the common role word in the content.
 - Name the project or context when relevant so memories are findable by project name.
 - Use direct active phrasing: "Elena Vasquez leads Project Lumen" not "Project Lumen is led by Elena Vasquez".
 - Use query-friendly vocabulary: write "has a deadline of April 15, 2025" not "submitting by April 15"; write "funded by NSF grant" not "has a grant from NSF".
@@ -43,7 +43,7 @@ Structured tags:
 - For people: include a tag like "person:elena-vasquez" (lowercase, hyphen-separated)
 - For grants/IDs: "grant:2401-8827" goes ONLY on the "funded by grant" fact — NOT on budget status or remaining balance facts (use "amount:240000" for those)
 - For dates: include a tag like "date:2025-03-03"
-- For specialties/roles: include both the formal tag AND common synonyms — e.g., for a principal investigator include "role:principal-investigator" AND "role:lead-researcher"
+- For specialties/roles: use the formal role tag — "role:principal-investigator", "role:research-assistant", "role:data-analyst". Do NOT invent synonym tags; role synonyms belong in the memory content, not in tags.
 - For measurements: match tags to THIS memory's specific measurement — "wavelength:532nm" for laser wavelength facts, "percentage:15" and "rate:folding-15-percent" for reduction percentage facts, "temperature:25c" for temperature threshold facts
 - Always include "source:distill" as a tag
 - Max 8 tags total (include entity tags + 2-3 topic tags + source:distill)
