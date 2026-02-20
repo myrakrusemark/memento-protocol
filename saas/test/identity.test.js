@@ -1,10 +1,11 @@
-import { describe, it, before, after, beforeEach, afterEach } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { createTestHarness } from "./setup.js";
 import {
   generateCrystal,
   crystallizeIdentity,
 } from "../src/services/identity.js";
+import { getWorkspaceKey } from "../src/services/crypto.js";
 
 // ---------------------------------------------------------------------------
 // Unit tests — generateCrystal (pure function)
@@ -150,7 +151,8 @@ describe("crystallizeIdentity", () => {
   });
 
   it("creates an identity snapshot in the database", async () => {
-    const result = await crystallizeIdentity(h.db);
+    const encKey = await getWorkspaceKey(h.seed.workspaceId, {}, h.db);
+    const result = await crystallizeIdentity(h.db, encKey);
 
     assert.ok(result.id, "Should return an id");
     assert.ok(result.crystal, "Should return crystal text");
@@ -160,7 +162,8 @@ describe("crystallizeIdentity", () => {
     const rows = await h.db.execute("SELECT * FROM identity_snapshots");
     assert.equal(rows.rows.length, 1);
     assert.equal(rows.rows[0].id, result.id);
-    assert.equal(rows.rows[0].crystal, result.crystal);
+    // Crystal is encrypted in DB, so just verify it exists and id matches
+    assert.ok(rows.rows[0].crystal);
     assert.equal(rows.rows[0].source_count, result.sourceCount);
   });
 
@@ -171,7 +174,8 @@ describe("crystallizeIdentity", () => {
       args: ["Building the identity system", "active_work"],
     });
 
-    const result = await crystallizeIdentity(h.db);
+    const encKey = await getWorkspaceKey(h.seed.workspaceId, {}, h.db);
+    const result = await crystallizeIdentity(h.db, encKey);
 
     assert.ok(result.crystal.includes("### Active Work"));
     assert.ok(result.crystal.includes("Building the identity system"));
@@ -201,7 +205,8 @@ describe("crystallizeIdentity", () => {
       args: [expiredId, "Expired memory", "fact", "[]", 5.0, "2020-01-01T00:00:00.000Z"],
     });
 
-    const result = await crystallizeIdentity(h.db);
+    const encKey = await getWorkspaceKey(h.seed.workspaceId, {}, h.db);
+    const result = await crystallizeIdentity(h.db, encKey);
 
     assert.ok(result.crystal.includes("High relevance memory"));
     assert.ok(!result.crystal.includes("Consolidated memory"));
@@ -216,7 +221,8 @@ describe("crystallizeIdentity", () => {
       args: ["con-1", "MCP patterns consolidated", "[]", '["mcp"]', "auto"],
     });
 
-    const result = await crystallizeIdentity(h.db);
+    const encKey = await getWorkspaceKey(h.seed.workspaceId, {}, h.db);
+    const result = await crystallizeIdentity(h.db, encKey);
 
     assert.ok(result.crystal.includes("MCP patterns consolidated"));
     assert.ok(result.crystal.includes("## Consolidated Patterns"));
@@ -249,7 +255,8 @@ describe("crystallizeIdentity", () => {
       args: ["con-1", "Summary", "[]", "[]", "auto"],
     });
 
-    const result = await crystallizeIdentity(h.db);
+    const encKey = await getWorkspaceKey(h.seed.workspaceId, {}, h.db);
+    const result = await crystallizeIdentity(h.db, encKey);
 
     // 5 sections + 2 memories + 1 consolidation = 8
     assert.equal(result.sourceCount, 8);
@@ -277,7 +284,7 @@ describe("POST /v1/identity/crystallize", () => {
 
     const body = await res.json();
     assert.ok(body.content[0].text.includes("Identity crystal"));
-    assert.ok(body.content[0].text.includes("created"));
+    assert.ok(body.content[0].text.includes("auto-generated"));
     assert.ok(body.content[0].text.includes("sources"));
   });
 
@@ -360,7 +367,8 @@ describe("GET /v1/identity", () => {
     const body = await res.json();
     assert.ok(body.content[0].text.includes("Second version"));
 
-    // First crystal still exists in DB
-    assert.ok(all.rows[0].crystal.includes("First version"));
+    // First crystal still exists in DB (may be encrypted, so just verify it exists and differs)
+    assert.ok(all.rows[0].crystal, "First crystal should exist in DB");
+    assert.notEqual(all.rows[0].crystal, all.rows[1].crystal, "Crystals should differ");
   });
 });

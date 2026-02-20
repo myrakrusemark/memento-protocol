@@ -108,6 +108,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
   name TEXT NOT NULL,
   db_url TEXT,
   db_token TEXT,
+  encrypted_key TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')),
   UNIQUE(user_id, name)
@@ -209,8 +210,25 @@ export async function initSchema(db, schemaType = "all") {
   }
 
   // Migrations — safe to re-run (ADD COLUMN is a no-op if column exists)
+  if (schemaType === "control" || schemaType === "all") {
+    await runControlMigrations(db);
+  }
   if (schemaType === "workspace" || schemaType === "all") {
     await runMigrations(db);
+  }
+}
+
+async function runControlMigrations(db) {
+  const migrations = [
+    `ALTER TABLE workspaces ADD COLUMN encrypted_key TEXT`,
+  ];
+  for (const sql of migrations) {
+    try {
+      await db.execute(sql);
+    } catch (err) {
+      if (err.message && err.message.includes("duplicate column")) continue;
+      throw err;
+    }
   }
 }
 

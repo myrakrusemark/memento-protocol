@@ -18,6 +18,7 @@ import { scoreAndRankMemories } from "../services/scoring.js";
 import { embedAndStore, removeVector } from "../services/embeddings.js";
 import { traverseGraph, getRelated } from "../services/graph.js";
 import { getLimits } from "../config/plans.js";
+import { encryptField, decryptField } from "../services/crypto.js";
 
 const MAX_IMAGES_PER_MEMORY = 5;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB decoded
@@ -140,13 +141,17 @@ memories.post("/", async (c) => {
     }
   }
 
+  // Encrypt content if workspace encryption is configured
+  const encKey = c.get("encryptionKey");
+  const storedContent = encKey ? await encryptField(content, encKey) : content;
+
   await db.execute({
     sql: `INSERT INTO memories (id, content, type, tags, expires_at, linkages, images)
           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    args: [id, content, type, tags, expiresAt, linkages, JSON.stringify(imagesMeta)],
+    args: [id, storedContent, type, tags, expiresAt, linkages, JSON.stringify(imagesMeta)],
   });
 
-  // Fire-and-forget embedding (don't await, don't block response)
+  // Fire-and-forget embedding (uses plaintext for vector indexing)
   embedAndStore(c.env, c.get("workspaceName"), id, content).catch(() => {});
 
   const tagList = body.tags && body.tags.length ? ` [${body.tags.join(", ")}]` : "";
@@ -231,14 +236,20 @@ memories.get("/", async (c) => {
     args: [...args, limit, offset],
   });
 
-  const memories = result.rows.map((row) => ({
-    ...row,
-    tags: safeParseTags(row.tags),
-    linkages: safeParseJson(row.linkages, []),
-    images: safeParseJson(row.images, []),
-  }));
+  const encKey = c.get("encryptionKey");
+  const memoriesList = [];
+  for (const row of result.rows) {
+    const content = encKey ? await decryptField(row.content, encKey) : row.content;
+    memoriesList.push({
+      ...row,
+      content,
+      tags: safeParseTags(row.tags),
+      linkages: safeParseJson(row.linkages, []),
+      images: safeParseJson(row.images, []),
+    });
+  }
 
-  return c.json({ memories, total, offset, limit });
+  return c.json({ memories: memoriesList, total, offset, limit });
 });
 
 // GET /v1/memories/recall — Search memories
@@ -273,7 +284,8 @@ memories.get("/recall", async (c) => {
     args: [now],
   });
 
-  // Pre-filter by type and tags before scoring
+  // Decrypt content for scoring + pre-filter by type and tags
+  const encKey = c.get("encryptionKey");
   const candidates = [];
   for (const row of result.rows) {
     if (typeParam && row.type !== typeParam) continue;
@@ -289,6 +301,9 @@ memories.get("/recall", async (c) => {
       if (!hasTag) continue;
     }
 
+    if (encKey) {
+      row.content = await decryptField(row.content, encKey);
+    }
     candidates.push(row);
   }
 
@@ -404,6 +419,7 @@ memories.post("/ingest", async (c) => {
   }
 
   const source = body.source || "bulk";
+  const encKey = c.get("encryptionKey");
   const ids = [];
 
   for (const item of items) {
@@ -413,14 +429,15 @@ memories.post("/ingest", async (c) => {
     const type = item.type || "observation";
     const tags = JSON.stringify([...(item.tags || []), `source:${source}`]);
     const expiresAt = item.expires || null;
+    const storedContent = encKey ? await encryptField(item.content, encKey) : item.content;
 
     await db.execute({
       sql: `INSERT INTO memories (id, content, type, tags, expires_at)
             VALUES (?, ?, ?, ?, ?)`,
-      args: [id, item.content, type, tags, expiresAt],
+      args: [id, storedContent, type, tags, expiresAt],
     });
 
-    // Fire-and-forget embedding
+    // Fire-and-forget embedding (uses plaintext for vector indexing)
     embedAndStore(c.env, c.get("workspaceName"), id, item.content).catch(() => {});
 
     ids.push(id);
@@ -479,8 +496,10 @@ memories.get("/:id", async (c) => {
   }
 
   const row = result.rows[0];
+  const encKey = c.get("encryptionKey");
   return c.json({
     ...row,
+    content: encKey ? await decryptField(row.content, encKey) : row.content,
     tags: safeParseTags(row.tags),
     linkages: safeParseJson(row.linkages, []),
     images: safeParseJson(row.images, []),
@@ -502,12 +521,14 @@ memories.put("/:id", async (c) => {
     return c.json({ error: "Memory not found." }, 404);
   }
 
+  const encKey = c.get("encryptionKey");
   const updates = [];
   const args = [];
 
   if (body.content !== undefined) {
+    const storedContent = encKey ? await encryptField(body.content, encKey) : body.content;
     updates.push("content = ?");
-    args.push(body.content);
+    args.push(storedContent);
   }
   if (body.type !== undefined) {
     updates.push("type = ?");
@@ -536,7 +557,7 @@ memories.put("/:id", async (c) => {
     args,
   });
 
-  // Return updated
+  // Return updated (decrypted)
   const result = await db.execute({
     sql: `SELECT id, content, type, tags, created_at, expires_at, relevance,
                  access_count, last_accessed_at, consolidated, consolidated_into, linkages, images
@@ -547,6 +568,7 @@ memories.put("/:id", async (c) => {
   const row = result.rows[0];
   return c.json({
     ...row,
+    content: encKey ? await decryptField(row.content, encKey) : row.content,
     tags: safeParseTags(row.tags),
     linkages: safeParseJson(row.linkages, []),
     images: safeParseJson(row.images, []),

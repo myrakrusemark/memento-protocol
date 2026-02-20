@@ -336,12 +336,12 @@ describe("POST /v1/consolidate/group", () => {
     // Extract the new memory ID
     const newId = text.match(/into (\S+)\./)[1];
 
-    // Verify the new memory exists in the memories table
-    const mem = await h.db.execute({ sql: "SELECT * FROM memories WHERE id = ?", args: [newId] });
-    assert.equal(mem.rows.length, 1);
-    assert.equal(mem.rows[0].content, "API v2 requires auth and has a 100/min rate limit.");
-    assert.equal(mem.rows[0].type, "fact");
-    assert.equal(mem.rows[0].consolidated, 0); // The new memory is active, not consolidated
+    // Verify the new memory exists and has correct content (via API to handle encryption)
+    const memRes = await h.request("GET", `/v1/memories/${newId}`);
+    const memBody = await memRes.json();
+    assert.equal(memBody.content, "API v2 requires auth and has a 100/min rate limit.");
+    assert.equal(memBody.type, "fact");
+    assert.equal(memBody.consolidated, 0); // The new memory is active, not consolidated
   });
 
   it("generates AI/template summary when content is not provided", async () => {

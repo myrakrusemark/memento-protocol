@@ -11,6 +11,7 @@
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { getLimits } from "../config/plans.js";
+import { encryptField, decryptField } from "../services/crypto.js";
 
 const items = new Hono();
 
@@ -65,11 +66,16 @@ items.post("/", async (c) => {
   const tags = JSON.stringify(body.tags || []);
   const nextAction = body.next_action || null;
 
+  const encKey = c.get("encryptionKey");
+  const storedTitle = encKey ? await encryptField(title, encKey) : title;
+  const storedContent = encKey ? await encryptField(content || "", encKey) : (content || "");
+  const storedNextAction = nextAction && encKey ? await encryptField(nextAction, encKey) : nextAction;
+
   await db.execute({
     sql: `INSERT INTO working_memory_items
           (id, category, title, content, status, priority, tags, next_action)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [id, category, title, content || "", status, priority, tags, nextAction],
+    args: [id, category, storedTitle, storedContent, status, priority, tags, storedNextAction],
   });
 
   return c.json(
@@ -96,6 +102,7 @@ items.get("/", async (c) => {
   const q = c.req.query("q");
   const limit = Math.min(100, Math.max(1, parseInt(c.req.query("limit") || "50", 10)));
   const offset = Math.max(0, parseInt(c.req.query("offset") || "0", 10));
+  const encKey = c.get("encryptionKey");
 
   let sql = "SELECT * FROM working_memory_items WHERE 1=1";
   const args = [];
@@ -110,29 +117,47 @@ items.get("/", async (c) => {
     args.push(status);
   }
 
-  if (q) {
+  // When encryption is active, text search must happen post-decryption.
+  // Only apply SQL LIKE filter when content is not encrypted.
+  if (q && !encKey) {
     sql += " AND (title LIKE ? OR content LIKE ?)";
     args.push(`%${q}%`, `%${q}%`);
   }
 
-  // Count total before pagination
-  const countResult = await db.execute({
-    sql: sql.replace("SELECT *", "SELECT COUNT(*) as count"),
-    args,
-  });
-  const total = countResult.rows[0].count;
-
-  sql += " ORDER BY priority DESC, created_at DESC LIMIT ? OFFSET ?";
-  args.push(limit, offset);
+  sql += " ORDER BY priority DESC, created_at DESC";
 
   const result = await db.execute({ sql, args });
 
-  const items = result.rows.map((row) => ({
-    ...row,
-    tags: safeParseTags(row.tags),
-  }));
+  // Decrypt and optionally filter by query
+  let itemsList = [];
+  for (const row of result.rows) {
+    const decTitle = encKey ? await decryptField(row.title, encKey) : row.title;
+    const decContent = encKey ? await decryptField(row.content, encKey) : row.content;
+    const decNextAction = row.next_action && encKey ? await decryptField(row.next_action, encKey) : row.next_action;
 
-  return c.json({ items, total, offset, limit });
+    // Post-decryption text search
+    if (q && encKey) {
+      const qLower = q.toLowerCase();
+      if (!decTitle.toLowerCase().includes(qLower) && !decContent.toLowerCase().includes(qLower)) {
+        continue;
+      }
+    }
+
+    itemsList.push({
+      ...row,
+      title: decTitle,
+      content: decContent,
+      next_action: decNextAction,
+      tags: safeParseTags(row.tags),
+    });
+  }
+
+  const total = itemsList.length;
+
+  // Apply pagination
+  const paginatedItems = itemsList.slice(offset, offset + limit);
+
+  return c.json({ items: paginatedItems, total, offset, limit });
 });
 
 // GET /items/:id — Get single item
@@ -150,7 +175,14 @@ items.get("/:id", async (c) => {
   }
 
   const row = result.rows[0];
-  return c.json({ ...row, tags: safeParseTags(row.tags) });
+  const encKey = c.get("encryptionKey");
+  return c.json({
+    ...row,
+    title: encKey ? await decryptField(row.title, encKey) : row.title,
+    content: encKey ? await decryptField(row.content, encKey) : row.content,
+    next_action: row.next_action && encKey ? await decryptField(row.next_action, encKey) : row.next_action,
+    tags: safeParseTags(row.tags),
+  });
 });
 
 // PUT /items/:id — Update item (partial)
@@ -169,16 +201,17 @@ items.put("/:id", async (c) => {
     return c.json({ error: "Item not found." }, 404);
   }
 
+  const encKey = c.get("encryptionKey");
   const updates = [];
   const args = [];
 
   if (body.title !== undefined) {
     updates.push("title = ?");
-    args.push(body.title);
+    args.push(encKey ? await encryptField(body.title, encKey) : body.title);
   }
   if (body.content !== undefined) {
     updates.push("content = ?");
-    args.push(body.content);
+    args.push(encKey ? await encryptField(body.content, encKey) : body.content);
   }
   if (body.category !== undefined) {
     if (!VALID_CATEGORIES.includes(body.category)) {
@@ -210,7 +243,7 @@ items.put("/:id", async (c) => {
   }
   if (body.next_action !== undefined) {
     updates.push("next_action = ?");
-    args.push(body.next_action);
+    args.push(body.next_action && encKey ? await encryptField(body.next_action, encKey) : body.next_action);
   }
 
   if (updates.length === 0) {
@@ -226,14 +259,20 @@ items.put("/:id", async (c) => {
     args,
   });
 
-  // Return updated item
+  // Return updated item (decrypted)
   const result = await db.execute({
     sql: "SELECT * FROM working_memory_items WHERE id = ?",
     args: [id],
   });
 
   const row = result.rows[0];
-  return c.json({ ...row, tags: safeParseTags(row.tags) });
+  return c.json({
+    ...row,
+    title: encKey ? await decryptField(row.title, encKey) : row.title,
+    content: encKey ? await decryptField(row.content, encKey) : row.content,
+    next_action: row.next_action && encKey ? await decryptField(row.next_action, encKey) : row.next_action,
+    tags: safeParseTags(row.tags),
+  });
 });
 
 // DELETE /items/:id — Delete item

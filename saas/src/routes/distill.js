@@ -11,6 +11,7 @@
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { embedAndStore } from "../services/embeddings.js";
+import { encryptField, decryptField } from "../services/crypto.js";
 
 const distill = new Hono();
 
@@ -74,6 +75,14 @@ distill.post("/", async (c) => {
           LIMIT 200`,
     args: [now],
   });
+
+  // Decrypt existing memories for dedup context
+  const encKey = c.get("encryptionKey");
+  if (encKey) {
+    for (const row of existing.rows) {
+      row.content = await decryptField(row.content, encKey);
+    }
+  }
 
   const existingBlock = existing.rows.length > 0
     ? existing.rows.map((r, i) => `${i + 1}. ${r.content}`).join("\n")
@@ -156,12 +165,13 @@ distill.post("/", async (c) => {
       : [];
     const tags = JSON.stringify([...entryTags, "source:distill"]);
 
+    const storedContent = encKey ? await encryptField(entry.content, encKey) : entry.content;
     await db.execute({
       sql: `INSERT INTO memories (id, content, type, tags) VALUES (?, ?, ?, ?)`,
-      args: [id, entry.content, type, tags],
+      args: [id, storedContent, type, tags],
     });
 
-    // Fire-and-forget embedding
+    // Fire-and-forget embedding (uses plaintext for vector indexing)
     embedAndStore(c.env, workspaceName, id, entry.content).catch(() => {});
 
     stored.push({ id, content: entry.content, type });

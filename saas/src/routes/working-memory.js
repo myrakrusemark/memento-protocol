@@ -7,6 +7,7 @@
  */
 
 import { Hono } from "hono";
+import { encryptField, decryptField } from "../services/crypto.js";
 
 const workingMemory = new Hono();
 
@@ -101,6 +102,7 @@ function renderSection(heading, items) {
 // GET /v1/working-memory — Full working memory as markdown
 workingMemory.get("/", async (c) => {
   const db = c.get("workspaceDb");
+  const encKey = c.get("encryptionKey");
 
   // Try items table first
   const itemsResult = await db.execute(
@@ -108,7 +110,17 @@ workingMemory.get("/", async (c) => {
   );
 
   if (itemsResult.rows.length > 0) {
-    const markdown = renderItemsAsMarkdown(itemsResult.rows);
+    // Decrypt item fields before rendering
+    const decryptedItems = [];
+    for (const row of itemsResult.rows) {
+      decryptedItems.push({
+        ...row,
+        title: encKey ? await decryptField(row.title, encKey) : row.title,
+        content: encKey ? await decryptField(row.content, encKey) : row.content,
+        next_action: row.next_action && encKey ? await decryptField(row.next_action, encKey) : row.next_action,
+      });
+    }
+    const markdown = renderItemsAsMarkdown(decryptedItems);
     return c.json({
       content: [{ type: "text", text: markdown }],
     });
@@ -125,14 +137,13 @@ workingMemory.get("/", async (c) => {
     });
   }
 
-  const markdown = result.rows
-    .map((row) => {
-      const body = row.content || "(empty)";
-      return `## ${row.heading}\n\n${body}`;
-    })
-    .join("\n\n---\n\n");
+  const markdown = [];
+  for (const row of result.rows) {
+    const body = encKey ? await decryptField(row.content, encKey) : row.content;
+    markdown.push(`## ${row.heading}\n\n${body || "(empty)"}`);
+  }
 
-  const full = `# Working Memory\n\n---\n\n${markdown}`;
+  const full = `# Working Memory\n\n---\n\n${markdown.join("\n\n---\n\n")}`;
 
   return c.json({
     content: [{ type: "text", text: full }],
@@ -160,11 +171,13 @@ workingMemory.get("/:section", async (c) => {
   }
 
   const row = result.rows[0];
+  const encKey = c.get("encryptionKey");
+  const content = encKey ? await decryptField(row.content, encKey) : row.content;
   return c.json({
     content: [
       {
         type: "text",
-        text: `## ${row.heading}\n\n${row.content || "(empty)"}`,
+        text: `## ${row.heading}\n\n${content || "(empty)"}`,
       },
     ],
   });
@@ -185,6 +198,9 @@ workingMemory.put("/:section", async (c) => {
     );
   }
 
+  const encKey = c.get("encryptionKey");
+  const storedContent = encKey ? await encryptField(newContent, encKey) : newContent;
+
   // Check if section exists
   const existing = await db.execute({
     sql: "SELECT section_key FROM working_memory_sections WHERE section_key = ?",
@@ -197,14 +213,14 @@ workingMemory.put("/:section", async (c) => {
     await db.execute({
       sql: `INSERT INTO working_memory_sections (section_key, heading, content, updated_at)
             VALUES (?, ?, ?, datetime('now'))`,
-      args: [key, heading, newContent],
+      args: [key, heading, storedContent],
     });
   } else {
     await db.execute({
       sql: `UPDATE working_memory_sections
             SET content = ?, updated_at = datetime('now')
             WHERE section_key = ?`,
-      args: [newContent, key],
+      args: [storedContent, key],
     });
   }
 

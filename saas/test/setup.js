@@ -6,6 +6,7 @@ import { createClient } from "@libsql/client";
 import { randomUUID, createHash } from "node:crypto";
 import { initSchema, setTestDb } from "../src/db/connection.js";
 import { createApp } from "../src/server.js";
+import { clearKeyCache } from "../src/services/crypto.js";
 
 /**
  * Create a fresh in-memory database with all schemas initialized.
@@ -105,6 +106,7 @@ export async function createTestHarness(env) {
   }
 
   function cleanup() {
+    clearKeyCache();
     setTestDb(null);
     db.close();
   }

@@ -8,6 +8,7 @@
 import { Hono } from "hono";
 import { scoreAndRankMemories, hybridRank } from "../services/scoring.js";
 import { semanticSearch } from "../services/embeddings.js";
+import { decryptField } from "../services/crypto.js";
 
 const context = new Hono();
 
@@ -52,6 +53,7 @@ context.post("/", async (c) => {
   const now = new Date();
   const nowISO = now.toISOString();
 
+  const encKey = c.get("encryptionKey");
   const result = { meta: { workspace: workspaceName, last_updated: nowISO } };
 
   // 1. Working memory items
@@ -66,11 +68,19 @@ context.post("/", async (c) => {
       "SELECT COUNT(*) as count FROM working_memory_items WHERE status IN ('active', 'paused')"
     );
 
-    result.working_memory = {
-      items: itemsResult.rows.map((row) => ({
+    const decryptedItems = [];
+    for (const row of itemsResult.rows) {
+      decryptedItems.push({
         ...row,
+        title: encKey ? await decryptField(row.title, encKey) : row.title,
+        content: encKey ? await decryptField(row.content, encKey) : row.content,
+        next_action: row.next_action && encKey ? await decryptField(row.next_action, encKey) : row.next_action,
         tags: safeParseTags(row.tags),
-      })),
+      });
+    }
+
+    result.working_memory = {
+      items: decryptedItems,
       total_active: totalResult.rows[0].count,
     };
   }
@@ -88,6 +98,13 @@ context.post("/", async (c) => {
             ORDER BY created_at DESC`,
       args: [nowISO],
     });
+
+    // Decrypt content for scoring
+    if (encKey) {
+      for (const row of memoriesResult.rows) {
+        row.content = await decryptField(row.content, encKey);
+      }
+    }
 
     // Keyword scoring (existing behavior)
     const keywordResults = scoreAndRankMemories(memoriesResult.rows, message, now, 20);
@@ -128,7 +145,11 @@ context.post("/", async (c) => {
             args: [hr.memoryId],
           });
           if (memRow.rows.length > 0) {
-            hr.memory = memRow.rows[0];
+            const mem = memRow.rows[0];
+            if (encKey) {
+              mem.content = await decryptField(mem.content, encKey);
+            }
+            hr.memory = mem;
           }
         }
       }
@@ -221,7 +242,9 @@ context.post("/", async (c) => {
     const skipMatches = [];
 
     for (const row of skipResult.rows) {
-      const itemLower = row.item.toLowerCase();
+      const decItem = encKey ? await decryptField(row.item, encKey) : row.item;
+      const decReason = encKey ? await decryptField(row.reason, encKey) : row.reason;
+      const itemLower = decItem.toLowerCase();
       const matched = keywords.some((kw) => itemLower.includes(kw)) ||
         keywords.length > 0 && itemLower.split(/\s+/).some((word) =>
           message.toLowerCase().includes(word)
@@ -229,8 +252,8 @@ context.post("/", async (c) => {
 
       if (matched) {
         skipMatches.push({
-          item: row.item,
-          reason: row.reason,
+          item: decItem,
+          reason: decReason,
           expires: row.expires_at,
         });
       }
@@ -245,9 +268,13 @@ context.post("/", async (c) => {
       "SELECT crystal FROM identity_snapshots ORDER BY created_at DESC LIMIT 1"
     );
 
-    result.identity = identityResult.rows.length > 0
-      ? identityResult.rows[0].crystal
-      : null;
+    if (identityResult.rows.length > 0) {
+      result.identity = encKey
+        ? await decryptField(identityResult.rows[0].crystal, encKey)
+        : identityResult.rows[0].crystal;
+    } else {
+      result.identity = null;
+    }
   }
 
   return c.json(result);

@@ -8,6 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { decryptField, encryptField } from "./crypto.js";
 
 // ---------------------------------------------------------------------------
 // Crystal generation (pure function)
@@ -98,16 +99,22 @@ export function generateCrystal(sections, memories, consolidations) {
  * @param {import("@libsql/client").Client} db - Workspace database client
  * @returns {Promise<{ id: string, crystal: string, sourceCount: number }>}
  */
-export async function crystallizeIdentity(db) {
+export async function crystallizeIdentity(db, encKey) {
   const now = new Date().toISOString();
 
-  // 1. Fetch all working memory sections
+  // 1. Fetch and decrypt working memory sections
   const sectionsResult = await db.execute(
     "SELECT section_key, heading, content FROM working_memory_sections ORDER BY rowid"
   );
-  const sections = sectionsResult.rows;
+  const sections = [];
+  for (const row of sectionsResult.rows) {
+    sections.push({
+      ...row,
+      content: encKey ? await decryptField(row.content, encKey) : row.content,
+    });
+  }
 
-  // 2. Fetch top 30 memories by relevance (non-consolidated, non-expired)
+  // 2. Fetch and decrypt top 30 memories by relevance
   const memoriesResult = await db.execute({
     sql: `SELECT id, content, type, tags
           FROM memories
@@ -117,13 +124,25 @@ export async function crystallizeIdentity(db) {
           LIMIT 30`,
     args: [now],
   });
-  const memories = memoriesResult.rows;
+  const memories = [];
+  for (const row of memoriesResult.rows) {
+    memories.push({
+      ...row,
+      content: encKey ? await decryptField(row.content, encKey) : row.content,
+    });
+  }
 
-  // 3. Fetch 10 most recent consolidations
+  // 3. Fetch and decrypt 10 most recent consolidations
   const consolidationsResult = await db.execute(
     "SELECT id, summary, tags FROM consolidations ORDER BY created_at DESC LIMIT 10"
   );
-  const consolidations = consolidationsResult.rows;
+  const consolidations = [];
+  for (const row of consolidationsResult.rows) {
+    consolidations.push({
+      ...row,
+      summary: encKey ? await decryptField(row.summary, encKey) : row.summary,
+    });
+  }
 
   // 4. Count total sources
   const sourceCount = sections.length + memories.length + consolidations.length;
@@ -131,12 +150,13 @@ export async function crystallizeIdentity(db) {
   // 5. Generate the crystal text
   const crystal = generateCrystal(sections, memories, consolidations);
 
-  // 6. Store in identity_snapshots
+  // 6. Store in identity_snapshots (encrypt crystal)
   const id = randomUUID().slice(0, 8);
+  const storedCrystal = encKey ? await encryptField(crystal, encKey) : crystal;
   await db.execute({
     sql: `INSERT INTO identity_snapshots (id, crystal, source_count, created_at)
           VALUES (?, ?, ?, datetime('now'))`,
-    args: [id, crystal, sourceCount],
+    args: [id, storedCrystal, sourceCount],
   });
 
   return { id, crystal, sourceCount };

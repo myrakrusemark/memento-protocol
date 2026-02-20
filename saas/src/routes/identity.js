@@ -10,6 +10,7 @@
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { crystallizeIdentity } from "../services/identity.js";
+import { encryptField, decryptField } from "../services/crypto.js";
 
 const identity = new Hono();
 
@@ -39,8 +40,10 @@ identity.get("/", async (c) => {
   }
 
   const row = result.rows[0];
+  const encKey = c.get("encryptionKey");
+  const crystal = encKey ? await decryptField(row.crystal, encKey) : row.crystal;
   return c.json({
-    content: [{ type: "text", text: row.crystal }],
+    content: [{ type: "text", text: crystal }],
     meta: {
       id: row.id,
       source_count: row.source_count,
@@ -64,11 +67,13 @@ identity.put("/", async (c) => {
 
   const id = randomUUID().slice(0, 8);
   const sourceCount = body.source_count || 0;
+  const encKey = c.get("encryptionKey");
+  const storedCrystal = encKey ? await encryptField(crystal.trim(), encKey) : crystal.trim();
 
   await db.execute({
     sql: `INSERT INTO identity_snapshots (id, crystal, source_count, created_at)
           VALUES (?, ?, ?, datetime('now'))`,
-    args: [id, crystal.trim(), sourceCount],
+    args: [id, storedCrystal, sourceCount],
   });
 
   return c.json({
@@ -84,7 +89,8 @@ identity.put("/", async (c) => {
 // POST /v1/identity/crystallize — Auto-generate from workspace data
 identity.post("/crystallize", async (c) => {
   const db = c.get("workspaceDb");
-  const { id, sourceCount } = await crystallizeIdentity(db);
+  const encKey = c.get("encryptionKey");
+  const { id, sourceCount } = await crystallizeIdentity(db, encKey);
 
   return c.json({
     content: [

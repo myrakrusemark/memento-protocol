@@ -15,6 +15,7 @@ import {
   createTursoToken,
 } from "../services/turso.js";
 import { getLimits } from "../config/plans.js";
+import { getWorkspaceKey } from "../services/crypto.js";
 
 /**
  * Seed default working memory sections in a new workspace.
@@ -114,6 +115,10 @@ export function workspaceMiddleware() {
     c.set("workspaceId", workspaceId);
     c.set("workspaceName", workspaceName);
     c.set("workspaceDb", wsDb);
+
+    // Resolve workspace encryption key (null if encryption not configured)
+    const encKey = await getWorkspaceKey(workspaceId, c.env, controlDb).catch(() => null);
+    c.set("encryptionKey", encKey);
 
     await next();
   };

@@ -9,6 +9,7 @@ import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { consolidateMemories, generateAISummary } from "../services/consolidation.js";
 import { embedAndStore } from "../services/embeddings.js";
+import { encryptField, decryptField } from "../services/crypto.js";
 
 const consolidation = new Hono();
 
@@ -23,7 +24,8 @@ function safeParseJson(str, fallback = []) {
 // POST /v1/consolidate — Run consolidation
 consolidation.post("/", async (c) => {
   const db = c.get("workspaceDb");
-  const { consolidated, created } = await consolidateMemories(db, c.env);
+  const encKey = c.get("encryptionKey");
+  const { consolidated, created } = await consolidateMemories(db, c.env, encKey);
 
   if (consolidated === 0) {
     return c.json({
@@ -75,12 +77,18 @@ consolidation.post("/group", async (c) => {
     }, 400);
   }
 
-  // Parse tags and linkages from source memories
-  const memories = result.rows.map((row) => ({
-    ...row,
-    tags: safeParseJson(row.tags),
-    linkages: safeParseJson(row.linkages),
-  }));
+  // Decrypt and parse tags/linkages from source memories
+  const encKey = c.get("encryptionKey");
+  const memoriesList = [];
+  for (const row of result.rows) {
+    memoriesList.push({
+      ...row,
+      content: encKey ? await decryptField(row.content, encKey) : row.content,
+      tags: safeParseJson(row.tags),
+      linkages: safeParseJson(row.linkages),
+    });
+  }
+  const memories = memoriesList;
 
   // Determine content: use agent-provided content, or generate summary
   let content;
@@ -141,13 +149,14 @@ consolidation.post("/group", async (c) => {
 
   // Create a new memory in the memories table
   const newId = randomUUID().slice(0, 8);
+  const storedContent = encKey ? await encryptField(content, encKey) : content;
   await db.execute({
     sql: `INSERT INTO memories (id, content, type, tags, access_count, linkages)
           VALUES (?, ?, ?, ?, ?, ?)`,
-    args: [newId, content, type, JSON.stringify(tagArray), totalAccessCount, JSON.stringify(allLinkages)],
+    args: [newId, storedContent, type, JSON.stringify(tagArray), totalAccessCount, JSON.stringify(allLinkages)],
   });
 
-  // Fire-and-forget: embed the new memory for vector search
+  // Fire-and-forget: embed the new memory for vector search (uses plaintext)
   embedAndStore(c.env, c.get("workspaceName"), newId, content).catch(() => {});
 
   // Mark each source as consolidated, pointing to the new memory's ID

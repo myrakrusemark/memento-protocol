@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
   name TEXT NOT NULL,
   db_url TEXT,
   db_token TEXT,
+  encrypted_key TEXT,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now')),
   UNIQUE(user_id, name)

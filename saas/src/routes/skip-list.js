@@ -8,6 +8,7 @@
 
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
+import { encryptField, decryptField } from "../services/crypto.js";
 
 const skipList = new Hono();
 
@@ -41,10 +42,13 @@ skipList.post("/", async (c) => {
   }
 
   const id = randomUUID().slice(0, 8);
+  const encKey = c.get("encryptionKey");
+  const storedItem = encKey ? await encryptField(item, encKey) : item;
+  const storedReason = encKey ? await encryptField(reason, encKey) : reason;
 
   await db.execute({
     sql: "INSERT INTO skip_list (id, item, reason, expires_at) VALUES (?, ?, ?, ?)",
-    args: [id, item, reason, expires],
+    args: [id, storedItem, storedReason, expires],
   });
 
   return c.json(
@@ -82,15 +86,18 @@ skipList.get("/check", async (c) => {
 
   // Fetch remaining entries
   const result = await db.execute("SELECT id, item, reason, expires_at FROM skip_list");
+  const encKey = c.get("encryptionKey");
 
-  // Check for matches (bidirectional, like reference server)
+  // Decrypt and check for matches (bidirectional, like reference server)
   for (const row of result.rows) {
-    if (matchesAllWords(query, row.item) || matchesAllWords(row.item, query)) {
+    const decItem = encKey ? await decryptField(row.item, encKey) : row.item;
+    const decReason = encKey ? await decryptField(row.reason, encKey) : row.reason;
+    if (matchesAllWords(query, decItem) || matchesAllWords(decItem, query)) {
       return c.json({
         content: [
           {
             type: "text",
-            text: `SKIP: "${row.item}"\nReason: ${row.reason}\nExpires: ${row.expires_at}`,
+            text: `SKIP: "${decItem}"\nReason: ${decReason}\nExpires: ${row.expires_at}`,
           },
         ],
       });

@@ -5,10 +5,13 @@ compatibility_flags = ["nodejs_compat"]
 
 # Environment variables are set via `wrangler secret put`
 # Required secrets:
-#   MEMENTO_DB_URL    - Turso control plane database URL
-#   MEMENTO_DB_TOKEN  - Turso control plane auth token
-#   TURSO_API_TOKEN   - Turso Platform API token (for creating workspace DBs)
-#   TURSO_ORG         - Turso organization slug
+#   MEMENTO_DB_URL         - Turso control plane database URL
+#   MEMENTO_DB_TOKEN       - Turso control plane auth token
+#   TURSO_API_TOKEN        - Turso Platform API token (for creating workspace DBs)
+#   TURSO_ORG              - Turso organization slug
+#   ENCRYPTION_MASTER_KEY  - 64 hex chars (32 bytes) master key for envelope encryption
+#                            Generate with: openssl rand -hex 32
+#                            Wraps per-workspace AES-256-GCM keys. Required for at-rest encryption.
 
 [observability]
 enabled = true

@@ -8,6 +8,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { decryptField, encryptField } from "./crypto.js";
 
 // ---------------------------------------------------------------------------
 // Union-Find helpers
@@ -208,7 +209,7 @@ export async function generateAISummary(env, group) {
  * @param {object} [env] - Workers environment (optional; enables AI summaries when env.AI is present)
  * @returns {Promise<{ consolidated: number, created: number }>}
  */
-export async function consolidateMemories(db, env) {
+export async function consolidateMemories(db, env, encKey) {
   const now = new Date().toISOString();
 
   // 1. Fetch all non-consolidated, non-expired memories
@@ -224,22 +225,23 @@ export async function consolidateMemories(db, env) {
     return { consolidated: 0, created: 0 };
   }
 
-  // 2. Parse tags from JSON strings to arrays
-  const memories = result.rows.map((row) => {
+  // 2. Decrypt and parse tags from JSON strings to arrays
+  const memories = [];
+  for (const row of result.rows) {
     let tags;
     try {
       tags = JSON.parse(row.tags || "[]");
     } catch {
       tags = [];
     }
-    return {
+    memories.push({
       id: row.id,
-      content: row.content,
+      content: encKey ? await decryptField(row.content, encKey) : row.content,
       type: row.type,
       tags,
       created_at: row.created_at,
-    };
-  });
+    });
+  }
 
   // 3. Find consolidation groups
   const groups = findConsolidationGroups(memories);
@@ -265,18 +267,20 @@ export async function consolidateMemories(db, env) {
       }
     }
 
-    // Insert consolidation record
+    // Insert consolidation record (encrypt summary fields)
+    const storedSummary = encKey ? await encryptField(summary, encKey) : summary;
+    const storedTemplateSummary = encKey ? await encryptField(templateSummary, encKey) : templateSummary;
     await db.execute({
       sql: `INSERT INTO consolidations (id, summary, source_ids, tags, type, method, template_summary)
             VALUES (?, ?, ?, ?, ?, ?, ?)`,
       args: [
         consolidationId,
-        summary,
+        storedSummary,
         JSON.stringify(sourceIds),
         JSON.stringify(Array.from(allTags).sort()),
         "auto",
         method,
-        templateSummary,
+        storedTemplateSummary,
       ],
     });
 

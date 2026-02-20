@@ -129,8 +129,8 @@ describe("skip list routes", () => {
       expires: "2099-12-31",
     });
 
-    // Get the ID from the database
-    const rows = await h.db.execute("SELECT id FROM skip_list WHERE item = 'to-remove'");
+    // Get the ID from the database (item is encrypted, so select by most recent)
+    const rows = await h.db.execute("SELECT id FROM skip_list ORDER BY added_at DESC LIMIT 1");
     const skipId = rows.rows[0].id;
 
     const res = await h.request("DELETE", `/v1/skip-list/${skipId}`);
