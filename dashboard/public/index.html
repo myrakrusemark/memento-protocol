@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Memento Analytics</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <!-- Login -->
+  <div id="login-view" class="view">
+    <div class="login-card">
+      <h1>Memento Analytics</h1>
+      <form id="login-form">
+        <input type="text" id="username" placeholder="Username" autocomplete="username" required>
+        <input type="password" id="password" placeholder="Password" autocomplete="current-password" required>
+        <button type="submit">Sign In</button>
+        <p id="login-error" class="error" hidden></p>
+      </form>
+    </div>
+  </div>
+
+  <!-- Dashboard -->
+  <div id="dashboard-view" class="view" hidden>
+    <header>
+      <h1>Memento Analytics</h1>
+      <div class="header-right">
+        <span id="last-updated"></span>
+        <button id="refresh-btn" title="Refresh">&#x21bb;</button>
+        <button id="logout-btn">Logout</button>
+      </div>
+    </header>
+
+    <div id="loading" class="loading">Loading data...</div>
+
+    <main id="dashboard" hidden>
+      <!-- Overview cards -->
+      <section class="cards">
+        <div class="card">
+          <div class="card-value" id="stat-users">—</div>
+          <div class="card-label">Total Users</div>
+        </div>
+        <div class="card">
+          <div class="card-value" id="stat-workspaces">—</div>
+          <div class="card-label">Workspaces</div>
+        </div>
+        <div class="card">
+          <div class="card-value" id="stat-memories">—</div>
+          <div class="card-label">Total Memories</div>
+        </div>
+        <div class="card">
+          <div class="card-value" id="stat-active">—</div>
+          <div class="card-label">Active (7d)</div>
+        </div>
+      </section>
+
+      <!-- Charts row -->
+      <section class="charts-row">
+        <div class="chart-container">
+          <h2>Signups (30d)</h2>
+          <canvas id="chart-signups"></canvas>
+        </div>
+        <div class="chart-container">
+          <h2>Plans</h2>
+          <canvas id="chart-plans"></canvas>
+        </div>
+      </section>
+
+      <!-- Memory charts row -->
+      <section class="charts-row">
+        <div class="chart-container">
+          <h2>Memory Growth (30d)</h2>
+          <canvas id="chart-growth"></canvas>
+        </div>
+        <div class="chart-container">
+          <h2>Memory Types</h2>
+          <canvas id="chart-types"></canvas>
+        </div>
+      </section>
+
+      <!-- Workspaces table -->
+      <section class="table-section">
+        <h2>Workspaces</h2>
+        <div class="table-wrap">
+          <table id="workspaces-table">
+            <thead>
+              <tr>
+                <th>Workspace</th>
+                <th>Owner</th>
+                <th>Plan</th>
+                <th>Memories</th>
+                <th>Items</th>
+                <th>Last Active</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

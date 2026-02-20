@@ -1,0 +1,21 @@
+{
+  "name": "memento-analytics",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "npx wrangler pages dev public/ --port 4250 --ip 127.0.0.1 --compatibility-date 2025-12-01 --compatibility-flag nodejs_compat",
+    "deploy": "npx wrangler pages deploy public/ --project-name memento-analytics --branch main",
+    "hash-password": "node scripts/hash-password.js",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@libsql/client": "^0.14"
+  },
+  "devDependencies": {
+    "eslint": "^10.0.0",
+    "@eslint/js": "^10.0.1",
+    "globals": "^17.3.0",
+    "wrangler": "^4"
+  }
+}

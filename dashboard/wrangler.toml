@@ -1,0 +1,10 @@
+name = "memento-analytics"
+compatibility_date = "2025-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Secrets (set via `wrangler secret put`):
+#   ADMIN_USER       - Admin username
+#   ADMIN_PASS_HASH  - PBKDF2 hash of admin password (from `npm run hash-password`)
+#   JWT_SECRET       - Random 64-char hex string
+#   MEMENTO_DB_URL   - Turso control DB URL (same as SaaS)
+#   MEMENTO_DB_TOKEN - Turso auth token (same as SaaS)

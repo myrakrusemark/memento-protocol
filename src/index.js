@@ -30,7 +30,7 @@ const config = resolveConfig();
 
 if (!config.apiKey) {
   console.error(
-    "Error: No API key found. Run `npx memento init` to set up, or set MEMENTO_API_KEY in .env"
+    "Error: No API key found. Run `npx memento-mcp init` to set up, or set MEMENTO_API_KEY in .env"
   );
   process.exit(1);
 }

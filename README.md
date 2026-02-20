@@ -7,7 +7,7 @@ AI agents have anterograde amnesia — every session starts blank. The Memento P
 ## Quick Start
 
 ```bash
-npx memento init
+npx memento-mcp init
 ```
 
 This creates `.memento.json`, configures Claude Code hooks, and sets up the MCP server — all in one command. Restart Claude Code to load the new config.
