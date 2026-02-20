@@ -308,7 +308,15 @@ memories.get("/recall", async (c) => {
   }
 
   // Score and rank using the scoring service
-  const topResults = scoreAndRankMemories(candidates, query, new Date(), limit);
+  const scored = scoreAndRankMemories(candidates, query, new Date(), limit);
+
+  // Apply recall_threshold: filter out memories below the configured minimum score
+  const thresholdResult = await db.execute({
+    sql: "SELECT value FROM workspace_settings WHERE key = 'recall_threshold'",
+    args: [],
+  });
+  const threshold = parseFloat(thresholdResult.rows[0]?.value ?? "0") || 0;
+  const topResults = threshold > 0 ? scored.filter((r) => r.score >= threshold) : scored;
 
   if (topResults.length === 0) {
     if (format === "json") {

@@ -109,6 +109,14 @@ context.post("/", async (c) => {
     // Keyword scoring (existing behavior)
     const keywordResults = scoreAndRankMemories(memoriesResult.rows, message, now, 20);
 
+    // Apply recall_threshold: filter out keyword results below the configured minimum score
+    const thresholdResult = await db.execute({
+      sql: "SELECT value FROM workspace_settings WHERE key = 'recall_threshold'",
+      args: [],
+    });
+    const threshold = parseFloat(thresholdResult.rows[0]?.value ?? "0") || 0;
+    const filteredKeyword = threshold > 0 ? keywordResults.filter((r) => r.score >= threshold) : keywordResults;
+
     // Semantic search (parallel, gracefully degrades to [])
     const vectorResults = await semanticSearch(c.env, workspaceName, message, 10);
 
@@ -133,7 +141,7 @@ context.post("/", async (c) => {
         // Use default alpha
       }
 
-      const hybridResults = hybridRank(keywordResults, vectorResults, alpha, 10);
+      const hybridResults = hybridRank(filteredKeyword, vectorResults, alpha, 10);
 
       // Fetch memory objects for vector-only results (those without a memory object)
       for (const hr of hybridResults) {
@@ -166,7 +174,7 @@ context.post("/", async (c) => {
       isHybrid = true;
     } else {
       // Pure keyword fallback (no vector bindings or no results)
-      topResults = keywordResults;
+      topResults = filteredKeyword;
     }
 
     // Log access for scored results (fire-and-forget)
