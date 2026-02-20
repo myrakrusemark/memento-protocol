@@ -74,105 +74,71 @@ admin.post("/encrypt-workspace", async (c) => {
     consolidations: { total: 0, encrypted: 0, skipped: 0 },
   };
 
-  // 1. Encrypt memories.content
-  const memories = await db.execute("SELECT id, content FROM memories");
-  stats.memories.total = memories.rows.length;
-  for (const row of memories.rows) {
-    if (isEncrypted(row.content)) {
-      stats.memories.skipped++;
-      continue;
+  // Helper: encrypt rows and batch-update to stay within Workers subrequest limits.
+  // Each table uses 1 SELECT + 1 batch UPDATE = 2 subrequests instead of N+1.
+  async function batchEncryptTable(table, selectSql, rowEncryptor) {
+    const result = await db.execute(selectSql);
+    const tableStat = stats[table];
+    tableStat.total = result.rows.length;
+
+    const updates = [];
+    for (const row of result.rows) {
+      const stmt = await rowEncryptor(row);
+      if (stmt) {
+        updates.push(stmt);
+        tableStat.encrypted++;
+      } else {
+        tableStat.skipped++;
+      }
     }
-    const encrypted = await encryptField(row.content, encKey);
-    await db.execute({
-      sql: "UPDATE memories SET content = ? WHERE id = ?",
-      args: [encrypted, row.id],
-    });
-    stats.memories.encrypted++;
+
+    if (updates.length > 0) {
+      await db.batch(updates);
+    }
   }
+
+  // 1. Encrypt memories.content
+  await batchEncryptTable("memories", "SELECT id, content FROM memories", async (row) => {
+    if (isEncrypted(row.content)) return null;
+    return { sql: "UPDATE memories SET content = ? WHERE id = ?", args: [await encryptField(row.content, encKey), row.id] };
+  });
 
   // 2. Encrypt identity_snapshots.crystal
-  const snapshots = await db.execute("SELECT id, crystal FROM identity_snapshots");
-  stats.identity_snapshots.total = snapshots.rows.length;
-  for (const row of snapshots.rows) {
-    if (isEncrypted(row.crystal)) {
-      stats.identity_snapshots.skipped++;
-      continue;
-    }
-    const encrypted = await encryptField(row.crystal, encKey);
-    await db.execute({
-      sql: "UPDATE identity_snapshots SET crystal = ? WHERE id = ?",
-      args: [encrypted, row.id],
-    });
-    stats.identity_snapshots.encrypted++;
-  }
+  await batchEncryptTable("identity_snapshots", "SELECT id, crystal FROM identity_snapshots", async (row) => {
+    if (isEncrypted(row.crystal)) return null;
+    return { sql: "UPDATE identity_snapshots SET crystal = ? WHERE id = ?", args: [await encryptField(row.crystal, encKey), row.id] };
+  });
 
   // 3. Encrypt working_memory_items (title, content, next_action)
-  const items = await db.execute("SELECT id, title, content, next_action FROM working_memory_items");
-  stats.working_memory_items.total = items.rows.length;
-  for (const row of items.rows) {
-    if (isEncrypted(row.title)) {
-      stats.working_memory_items.skipped++;
-      continue;
-    }
+  await batchEncryptTable("working_memory_items", "SELECT id, title, content, next_action FROM working_memory_items", async (row) => {
+    if (isEncrypted(row.title)) return null;
     const encTitle = await encryptField(row.title, encKey);
     const encContent = row.content ? await encryptField(row.content, encKey) : row.content;
     const encNextAction = row.next_action ? await encryptField(row.next_action, encKey) : row.next_action;
-    await db.execute({
-      sql: "UPDATE working_memory_items SET title = ?, content = ?, next_action = ? WHERE id = ?",
-      args: [encTitle, encContent, encNextAction, row.id],
-    });
-    stats.working_memory_items.encrypted++;
-  }
+    return { sql: "UPDATE working_memory_items SET title = ?, content = ?, next_action = ? WHERE id = ?", args: [encTitle, encContent, encNextAction, row.id] };
+  });
 
   // 4. Encrypt working_memory_sections.content
-  const sections = await db.execute("SELECT section_key, content FROM working_memory_sections");
-  stats.working_memory_sections.total = sections.rows.length;
-  for (const row of sections.rows) {
-    if (!row.content || isEncrypted(row.content)) {
-      stats.working_memory_sections.skipped++;
-      continue;
-    }
-    const encrypted = await encryptField(row.content, encKey);
-    await db.execute({
-      sql: "UPDATE working_memory_sections SET content = ? WHERE section_key = ?",
-      args: [encrypted, row.section_key],
-    });
-    stats.working_memory_sections.encrypted++;
-  }
+  await batchEncryptTable("working_memory_sections", "SELECT section_key, content FROM working_memory_sections", async (row) => {
+    if (!row.content || isEncrypted(row.content)) return null;
+    return { sql: "UPDATE working_memory_sections SET content = ? WHERE section_key = ?", args: [await encryptField(row.content, encKey), row.section_key] };
+  });
 
   // 5. Encrypt skip_list (item, reason)
-  const skipEntries = await db.execute("SELECT id, item, reason FROM skip_list");
-  stats.skip_list.total = skipEntries.rows.length;
-  for (const row of skipEntries.rows) {
-    if (isEncrypted(row.item)) {
-      stats.skip_list.skipped++;
-      continue;
-    }
+  await batchEncryptTable("skip_list", "SELECT id, item, reason FROM skip_list", async (row) => {
+    if (isEncrypted(row.item)) return null;
     const encItem = await encryptField(row.item, encKey);
     const encReason = await encryptField(row.reason, encKey);
-    await db.execute({
-      sql: "UPDATE skip_list SET item = ?, reason = ? WHERE id = ?",
-      args: [encItem, encReason, row.id],
-    });
-    stats.skip_list.encrypted++;
-  }
+    return { sql: "UPDATE skip_list SET item = ?, reason = ? WHERE id = ?", args: [encItem, encReason, row.id] };
+  });
 
   // 6. Encrypt consolidations (summary, template_summary)
-  const consolidations = await db.execute("SELECT id, summary, template_summary FROM consolidations");
-  stats.consolidations.total = consolidations.rows.length;
-  for (const row of consolidations.rows) {
-    if (isEncrypted(row.summary)) {
-      stats.consolidations.skipped++;
-      continue;
-    }
+  await batchEncryptTable("consolidations", "SELECT id, summary, template_summary FROM consolidations", async (row) => {
+    if (isEncrypted(row.summary)) return null;
     const encSummary = await encryptField(row.summary, encKey);
     const encTemplate = row.template_summary ? await encryptField(row.template_summary, encKey) : row.template_summary;
-    await db.execute({
-      sql: "UPDATE consolidations SET summary = ?, template_summary = ? WHERE id = ?",
-      args: [encSummary, encTemplate, row.id],
-    });
-    stats.consolidations.encrypted++;
-  }
+    return { sql: "UPDATE consolidations SET summary = ?, template_summary = ? WHERE id = ?", args: [encSummary, encTemplate, row.id] };
+  });
 
   const lines = Object.entries(stats).map(
     ([table, s]) => `  ${table}: ${s.encrypted} encrypted, ${s.skipped} skipped (${s.total} total)`
