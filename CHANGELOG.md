@@ -10,6 +10,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ---
 
+## [0.2.0] - 2026-02-20
+
+### Added
+- `recall_threshold` workspace setting — filter out low-confidence memories before returning results; default 0 (disabled, backward compatible). Set via `PUT /v1/settings/recall_threshold`.
+- `/v1/settings` endpoint — `GET` lists all workspace settings, `PUT /:key` sets a value, `DELETE /:key` removes it (reverts to default). Exposes `recall_threshold` and `recall_alpha`.
+- Structured entity tagging in `/v1/distill` — LLM now emits typed tags (`person:elena-vasquez`, `grant:2401-8827`, `specialty:photonics`, `date:2025-03-03`, `laser:532nm`, etc.) enabling tag-substring search for specific entities.
+- Entity tag budget raised from 3 to 7 (+ `source:distill` = max 8 stored tags).
+
+### Fixed
+- Stop word filtering in `scoreAndRankMemories` — common words ("is", "the", "on", "who") no longer inflate keyword scores for all memories. Short numeric identifiers ("62", "532") are preserved. Falls back to unfiltered terms for vacuous queries.
+- Distill system prompt vocabulary — extracted memories now lead with searchable terms, preserve exact identifiers verbatim (`#2401-8827`, `$240,000`, `532nm`), include role vocabulary explicitly, and name project context.
+
+### Changed
+- `/v1/memories/recall` applies `recall_threshold` filter before building response (default 0 = no filter).
+- `/v1/context` applies `recall_threshold` filter to keyword results before hybrid rank fusion.
+
+---
+
 ## [0.1.9] - 2026-02-20
 
 ### Fixed
