@@ -31,6 +31,13 @@ Rules:
 - If the conversation is trivial, return an empty array.
 - Return ONLY valid JSON — no markdown, no commentary, no code fences.
 
+Memory writing style:
+- Lead with the most searchable term: entity names, project names, specific identifiers.
+- Preserve exact values verbatim: grant IDs (e.g., "#2401-8827"), amounts (e.g., "$240,000"), measurements (e.g., "532nm"), percentages, and dates (e.g., "March 3, 2025").
+- Include role and relationship vocabulary explicitly: write "Lead researcher Dr. Elena Vasquez specializes in photonics" not "Dr. Elena Vasquez is a specialist" or "The laser work is Elena's domain".
+- Name the project or context when relevant so memories are findable by project name.
+- Use direct active phrasing: "Elena Vasquez leads Project Lumen" not "Project Lumen is led by Elena Vasquez".
+
 Output format:
 [{"content": "...", "type": "fact", "tags": ["tag1", "tag2"]}]
 
