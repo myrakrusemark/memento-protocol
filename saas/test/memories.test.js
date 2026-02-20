@@ -173,3 +173,63 @@ describe("memories routes", () => {
     assert.equal(res.status, 404);
   });
 });
+
+// ---------------------------------------------------------------------------
+// recall_threshold workspace setting
+// ---------------------------------------------------------------------------
+
+describe("GET /v1/memories/recall — recall_threshold setting", () => {
+  beforeEach(async () => {
+    h = await createTestHarness();
+  });
+
+  afterEach(() => {
+    h.cleanup();
+  });
+
+  it("threshold=0 (default) returns all matching memories — backward compatible", async () => {
+    // "alpha only" matches 1 of 3 query terms → keyword≈0.33, score≈0.33 > 0
+    await h.request("POST", "/v1/memories", { content: "alpha only here" });
+
+    // No threshold set — partial match should still be returned
+    const res = await h.request("GET", "/v1/memories/recall?query=alpha+beta+gamma");
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.content[0].text.includes("Found 1"), "partial match should be returned with default threshold=0");
+  });
+
+  it("threshold=0.5 filters out memories whose score is below the threshold", async () => {
+    // Low-scoring: "alpha only" matches 1 of 3 query terms → keyword≈0.33 → score≈0.33 < 0.5
+    await h.request("POST", "/v1/memories", { content: "alpha only here" });
+    // High-scoring: matches all 3 query terms → keyword=1.0 → score≈1.0 >= 0.5
+    await h.request("POST", "/v1/memories", { content: "alpha beta gamma combined" });
+
+    await h.db.execute({
+      sql: "INSERT OR REPLACE INTO workspace_settings (key, value) VALUES (?, ?)",
+      args: ["recall_threshold", "0.5"],
+    });
+
+    const res = await h.request("GET", "/v1/memories/recall?query=alpha+beta+gamma");
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const text = body.content[0].text;
+    assert.ok(text.includes("Found 1"), "only the high-scoring memory should pass the threshold");
+    assert.ok(text.includes("alpha beta gamma combined"), "full-match memory should be present");
+    assert.ok(!text.includes("alpha only here"), "low-scoring memory should be filtered out");
+  });
+
+  it("threshold=1.0 returns empty when no memory scores perfectly", async () => {
+    // "alpha only" matches 1 of 2 query terms → keyword=0.5 → score≈0.5 < 1.0
+    await h.request("POST", "/v1/memories", { content: "alpha only content" });
+
+    await h.db.execute({
+      sql: "INSERT OR REPLACE INTO workspace_settings (key, value) VALUES (?, ?)",
+      args: ["recall_threshold", "1.0"],
+    });
+
+    const res = await h.request("GET", "/v1/memories/recall?query=alpha+beta");
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.content[0].text.includes("No memories found"), "partial-match memory should be filtered by strict threshold=1.0");
+  });
+});
