@@ -9,6 +9,7 @@
 
 import { randomUUID } from "node:crypto";
 import { decryptField, encryptField } from "./crypto.js";
+import { embedAndStore } from "./embeddings.js";
 
 // ---------------------------------------------------------------------------
 // Union-Find helpers
@@ -202,19 +203,21 @@ export async function generateAISummary(env, group) {
  * 1. Fetches all non-consolidated, non-expired memories
  * 2. Parses their tags from JSON strings to arrays
  * 3. Finds consolidation groups (3+ memories sharing tags)
- * 4. For each group: creates a consolidation record (AI or template summary), marks source memories
- * 5. Returns { consolidated: number of groups, created: total memories consolidated }
+ * 4. For each group: creates a consolidation record, inserts a new memory, marks source memories
+ * 5. Returns { consolidated: number of groups, sourceCount: total source memories processed }
  *
  * @param {import("@libsql/client").Client} db - Workspace database client
  * @param {object} [env] - Workers environment (optional; enables AI summaries when env.AI is present)
- * @returns {Promise<{ consolidated: number, created: number }>}
+ * @param {string} [encKey] - Encryption key for field-level encryption
+ * @param {string} [workspaceName] - Workspace name for vector embedding
+ * @returns {Promise<{ consolidated: number, sourceCount: number }>}
  */
-export async function consolidateMemories(db, env, encKey) {
+export async function consolidateMemories(db, env, encKey, workspaceName) {
   const now = new Date().toISOString();
 
   // 1. Fetch all non-consolidated, non-expired memories
   const result = await db.execute({
-    sql: `SELECT id, content, type, tags, created_at
+    sql: `SELECT id, content, type, tags, created_at, access_count, linkages
           FROM memories
           WHERE consolidated = 0
             AND (expires_at IS NULL OR expires_at > ?)`,
@@ -222,10 +225,10 @@ export async function consolidateMemories(db, env, encKey) {
   });
 
   if (result.rows.length === 0) {
-    return { consolidated: 0, created: 0 };
+    return { consolidated: 0, sourceCount: 0 };
   }
 
-  // 2. Decrypt and parse tags from JSON strings to arrays
+  // 2. Decrypt and parse tags/linkages from JSON strings to arrays
   const memories = [];
   for (const row of result.rows) {
     let tags;
@@ -234,12 +237,20 @@ export async function consolidateMemories(db, env, encKey) {
     } catch {
       tags = [];
     }
+    let linkages;
+    try {
+      linkages = JSON.parse(row.linkages || "[]");
+    } catch {
+      linkages = [];
+    }
     memories.push({
       id: row.id,
       content: encKey ? await decryptField(row.content, encKey) : row.content,
       type: row.type,
       tags,
       created_at: row.created_at,
+      access_count: row.access_count || 0,
+      linkages,
     });
   }
 
@@ -247,12 +258,12 @@ export async function consolidateMemories(db, env, encKey) {
   const groups = findConsolidationGroups(memories);
 
   if (groups.length === 0) {
-    return { consolidated: 0, created: 0 };
+    return { consolidated: 0, sourceCount: 0 };
   }
 
-  let totalMemories = 0;
+  let totalSourceMemories = 0;
 
-  // 4. For each group: create consolidation record, mark sources
+  // 4. For each group: create consolidation record, new memory, mark sources
   for (const group of groups) {
     const consolidationId = randomUUID().slice(0, 8);
     const templateSummary = generateSummary(group);
@@ -266,6 +277,7 @@ export async function consolidateMemories(db, env, encKey) {
         allTags.add(tag);
       }
     }
+    const tagArray = Array.from(allTags).sort();
 
     // Insert consolidation record (encrypt summary fields)
     const storedSummary = encKey ? await encryptField(summary, encKey) : summary;
@@ -277,23 +289,77 @@ export async function consolidateMemories(db, env, encKey) {
         consolidationId,
         storedSummary,
         JSON.stringify(sourceIds),
-        JSON.stringify(Array.from(allTags).sort()),
+        JSON.stringify(tagArray),
         "auto",
         method,
         storedTemplateSummary,
       ],
     });
 
-    // Mark source memories as consolidated
+    // Create a new memory visible to recall (mirrors /group behavior)
+    const newMemoryId = randomUUID().slice(0, 8);
+
+    // Determine most common type among source memories
+    const typeCounts = {};
+    for (const mem of group) {
+      typeCounts[mem.type] = (typeCounts[mem.type] || 0) + 1;
+    }
+    const dominantType = Object.entries(typeCounts).sort((a, b) => b[1] - a[1])[0][0];
+
+    // Sum access counts from sources
+    const totalAccessCount = group.reduce((sum, m) => sum + (m.access_count || 0), 0);
+
+    // Build linkages: consolidated-from refs + inherited linkages (deduplicated)
+    const consolidatedFromLinks = group.map((m) => ({
+      type: "memory",
+      id: m.id,
+      label: "consolidated-from",
+    }));
+    const seenLinkKeys = new Set(consolidatedFromLinks.map((l) => `${l.type}:${l.id}:${l.label}`));
+    const inheritedLinks = [];
+    for (const mem of group) {
+      if (!Array.isArray(mem.linkages)) continue;
+      for (const link of mem.linkages) {
+        const ref = link.type === "file" ? link.path : link.id;
+        const key = `${link.type}:${ref}:${link.label || ""}`;
+        if (!seenLinkKeys.has(key)) {
+          seenLinkKeys.add(key);
+          inheritedLinks.push(link);
+        }
+      }
+    }
+    const allLinkages = [...consolidatedFromLinks, ...inheritedLinks];
+
+    // Insert into memories table
+    const storedMemoryContent = encKey ? await encryptField(summary, encKey) : summary;
+    await db.execute({
+      sql: `INSERT INTO memories (id, content, type, tags, access_count, linkages)
+            VALUES (?, ?, ?, ?, ?, ?)`,
+      args: [
+        newMemoryId,
+        storedMemoryContent,
+        dominantType,
+        JSON.stringify(tagArray),
+        totalAccessCount,
+        JSON.stringify(allLinkages),
+      ],
+    });
+
+    // Fire-and-forget: embed for vector search
+    if (workspaceName && env) {
+      embedAndStore(env, workspaceName, newMemoryId, summary).catch(() => {});
+    }
+
+    // Mark source memories as consolidated, pointing to the new memory
     for (const mem of group) {
       await db.execute({
         sql: `UPDATE memories SET consolidated = 1, consolidated_into = ? WHERE id = ?`,
-        args: [consolidationId, mem.id],
+        args: [newMemoryId, mem.id],
       });
     }
 
-    totalMemories += group.length;
+    totalSourceMemories += group.length;
   }
 
-  return { consolidated: groups.length, created: totalMemories };
+  return { consolidated: groups.length, sourceCount: totalSourceMemories };
 }

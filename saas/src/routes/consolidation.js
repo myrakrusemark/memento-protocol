@@ -25,7 +25,8 @@ function safeParseJson(str, fallback = []) {
 consolidation.post("/", async (c) => {
   const db = c.get("workspaceDb");
   const encKey = c.get("encryptionKey");
-  const { consolidated, created } = await consolidateMemories(db, c.env, encKey);
+  const workspaceName = c.get("workspaceName");
+  const { consolidated, sourceCount } = await consolidateMemories(db, c.env, encKey, workspaceName);
 
   if (consolidated === 0) {
     return c.json({
@@ -42,7 +43,7 @@ consolidation.post("/", async (c) => {
     content: [
       {
         type: "text",
-        text: `Consolidated ${consolidated} group${consolidated === 1 ? "" : "s"} (${created} memories total).`,
+        text: `Consolidated ${consolidated} group${consolidated === 1 ? "" : "s"} from ${sourceCount} source memories into ${consolidated} new memor${consolidated === 1 ? "y" : "ies"}.`,
       },
     ],
   });

@@ -135,7 +135,7 @@ describe("consolidateMemories", () => {
     h.cleanup();
   });
 
-  it("creates consolidation records in the database", async () => {
+  it("creates consolidation records and new memories in the database", async () => {
     // Insert 3 memories sharing the "mcp" tag
     for (let i = 0; i < 3; i++) {
       await h.request("POST", "/v1/memories", {
@@ -147,7 +147,7 @@ describe("consolidateMemories", () => {
 
     const result = await consolidateMemories(h.db);
     assert.equal(result.consolidated, 1);
-    assert.equal(result.created, 3);
+    assert.equal(result.sourceCount, 3);
 
     // Verify consolidation record was created
     const cons = await h.db.execute("SELECT * FROM consolidations");
@@ -157,9 +157,21 @@ describe("consolidateMemories", () => {
 
     const sourceIds = JSON.parse(cons.rows[0].source_ids);
     assert.equal(sourceIds.length, 3);
+
+    // Verify a new memory was created (visible to recall)
+    const newMem = await h.db.execute(
+      "SELECT * FROM memories WHERE consolidated = 0 AND content LIKE '%3 memories consolidated%'"
+    );
+    assert.equal(newMem.rows.length, 1);
+    assert.ok(newMem.rows[0].tags.includes("mcp"));
+
+    // Verify linkages point back to sources
+    const linkages = JSON.parse(newMem.rows[0].linkages);
+    const fromLinks = linkages.filter((l) => l.label === "consolidated-from");
+    assert.equal(fromLinks.length, 3);
   });
 
-  it("marks source memories as consolidated", async () => {
+  it("marks source memories as consolidated, pointing to the new memory", async () => {
     for (let i = 0; i < 3; i++) {
       await h.request("POST", "/v1/memories", {
         content: `Tag memory ${i}`,
@@ -170,24 +182,32 @@ describe("consolidateMemories", () => {
 
     await consolidateMemories(h.db);
 
-    // Check that all memories are now consolidated = 1
+    // Check that all source memories are now consolidated = 1
     const mems = await h.db.execute(
       "SELECT id, consolidated, consolidated_into FROM memories WHERE consolidated = 1"
     );
     assert.equal(mems.rows.length, 3);
 
-    // All should point to the same consolidation ID
-    const consolidationId = mems.rows[0].consolidated_into;
-    assert.ok(consolidationId);
+    // All should point to the same new memory ID
+    const newMemoryId = mems.rows[0].consolidated_into;
+    assert.ok(newMemoryId);
     for (const row of mems.rows) {
-      assert.equal(row.consolidated_into, consolidationId);
+      assert.equal(row.consolidated_into, newMemoryId);
     }
+
+    // Verify consolidated_into points to a real memory (not just the consolidation record)
+    const targetMem = await h.db.execute({
+      sql: "SELECT id, consolidated FROM memories WHERE id = ?",
+      args: [newMemoryId],
+    });
+    assert.equal(targetMem.rows.length, 1);
+    assert.equal(targetMem.rows[0].consolidated, 0); // The new memory itself is active
   });
 
   it("returns 0 when nothing to consolidate", async () => {
     const result = await consolidateMemories(h.db);
     assert.equal(result.consolidated, 0);
-    assert.equal(result.created, 0);
+    assert.equal(result.sourceCount, 0);
   });
 
   it("returns 0 when no groups reach 3+ members", async () => {
@@ -205,7 +225,7 @@ describe("consolidateMemories", () => {
 
     const result = await consolidateMemories(h.db);
     assert.equal(result.consolidated, 0);
-    assert.equal(result.created, 0);
+    assert.equal(result.sourceCount, 0);
   });
 
   it("does not re-consolidate already consolidated memories", async () => {
@@ -221,10 +241,11 @@ describe("consolidateMemories", () => {
     const first = await consolidateMemories(h.db);
     assert.equal(first.consolidated, 1);
 
-    // Second consolidation should find nothing
+    // Second consolidation should find nothing (new memory exists but can't
+    // form a group of 3+ by itself)
     const second = await consolidateMemories(h.db);
     assert.equal(second.consolidated, 0);
-    assert.equal(second.created, 0);
+    assert.equal(second.sourceCount, 0);
   });
 });
 
@@ -257,7 +278,8 @@ describe("POST /v1/consolidate", () => {
 
     const body = await res.json();
     assert.ok(body.content[0].text.includes("Consolidated 1 group"));
-    assert.ok(body.content[0].text.includes("4 memories total"));
+    assert.ok(body.content[0].text.includes("from 4 source memories"));
+    assert.ok(body.content[0].text.includes("into 1 new memory"));
   });
 
   it("returns no-candidates message when nothing to consolidate", async () => {
@@ -269,7 +291,7 @@ describe("POST /v1/consolidate", () => {
     assert.ok(body.content[0].text.includes("need 3+ memories sharing tags"));
   });
 
-  it("consolidated memories are hidden from recall", async () => {
+  it("source memories are hidden but consolidated memory is visible in recall", async () => {
     // Store 3 memories with a shared tag and a unique keyword
     for (let i = 0; i < 3; i++) {
       await h.request("POST", "/v1/memories", {
@@ -287,10 +309,12 @@ describe("POST /v1/consolidate", () => {
     // Consolidate
     await h.request("POST", "/v1/consolidate");
 
-    // Verify they are hidden from recall after consolidation
+    // After consolidation: source memories are hidden, but the new consolidated
+    // memory (containing the summary) should be visible
     const afterRes = await h.request("GET", "/v1/memories/recall?query=xyzzy+consolidatable");
     const afterBody = await afterRes.json();
-    assert.ok(afterBody.content[0].text.includes("No memories found"));
+    assert.ok(afterBody.content[0].text.includes("Found 1"));
+    assert.ok(afterBody.content[0].text.includes("3 memories consolidated"));
   });
 });
 
