@@ -27,7 +27,7 @@ Rules:
 - Do NOT extract things already covered in the existing memories listed below.
 - Each memory should be a single, self-contained statement.
 - Each memory needs a type: "fact", "decision", "instruction", "observation", or "preference".
-- Each memory needs 1-3 lowercase tags for categorization.
+- Each memory needs tags for categorization (see "Structured tags" below for format and limits).
 - If the conversation is trivial, return an empty array.
 - Return ONLY valid JSON — no markdown, no commentary, no code fences.
 
@@ -37,6 +37,15 @@ Memory writing style:
 - Include role and relationship vocabulary explicitly: write "Lead researcher Dr. Elena Vasquez specializes in photonics" not "Dr. Elena Vasquez is a specialist" or "The laser work is Elena's domain".
 - Name the project or context when relevant so memories are findable by project name.
 - Use direct active phrasing: "Elena Vasquez leads Project Lumen" not "Project Lumen is led by Elena Vasquez".
+
+Structured tags:
+- For people: include a tag like "person:elena-vasquez" (lowercase, hyphen-separated)
+- For grants/IDs: include a tag like "grant:2401-8827" or "id:lumen-data-prod"
+- For dates: include a tag like "date:2025-03-03"
+- For specialties/roles: include a tag like "role:principal-investigator", "specialty:photonics"
+- For measurements: include a tag like "wavelength:532nm", "percentage:62"
+- Always include "source:distill" as a tag
+- Max 8 tags total (include entity tags + 2-3 topic tags + source:distill)
 
 Output format:
 [{"content": "...", "type": "fact", "tags": ["tag1", "tag2"]}]
