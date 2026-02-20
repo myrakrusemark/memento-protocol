@@ -50,6 +50,7 @@ context.post("/", async (c) => {
 
   const message = body.message || "";
   const include = body.include || ["working_memory", "memories", "skip_list", "identity"];
+  const trackAccess = body.track_access !== false;
   const now = new Date();
   const nowISO = now.toISOString();
 
@@ -178,15 +179,18 @@ context.post("/", async (c) => {
     }
 
     // Log access for scored results (fire-and-forget)
-    for (const r of topResults) {
-      db.execute({
-        sql: "INSERT INTO access_log (memory_id, query) VALUES (?, ?)",
-        args: [r.memory.id, message.slice(0, 200)],
-      }).catch(() => {});
-      db.execute({
-        sql: "UPDATE memories SET access_count = access_count + 1, last_accessed_at = datetime('now') WHERE id = ?",
-        args: [r.memory.id],
-      }).catch(() => {});
+    // Skip when track_access: false — used by benchmarks to avoid contaminating scores.
+    if (trackAccess) {
+      for (const r of topResults) {
+        db.execute({
+          sql: "INSERT INTO access_log (memory_id, query) VALUES (?, ?)",
+          args: [r.memory.id, message.slice(0, 200)],
+        }).catch(() => {});
+        db.execute({
+          sql: "UPDATE memories SET access_count = access_count + 1, last_accessed_at = datetime('now') WHERE id = ?",
+          args: [r.memory.id],
+        }).catch(() => {});
+      }
     }
 
     const matches = topResults.map((r) => {
