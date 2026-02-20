@@ -7,6 +7,11 @@
 
 import { randomUUID, createHash, randomBytes } from "node:crypto";
 import { getControlDb, initSchema, getWorkspaceDb } from "../db/connection.js";
+import {
+  isTursoConfigured,
+  createTursoDatabase,
+  createTursoToken,
+} from "../services/turso.js";
 import { PLANS } from "../config/plans.js";
 
 /**
@@ -155,19 +160,26 @@ export function registerAuthRoutes(app) {
       args: [apiKeyId, userId, keyHash, apiKey.slice(0, 12), name],
     });
 
-    // Create default workspace
+    // Create default workspace with a dedicated database
     const workspaceId = randomUUID().slice(0, 8);
 
-    // In production with Turso, each workspace gets its own edge database.
-    // For now, skip Turso provisioning on signup — the workspace middleware
-    // will handle it on first authenticated request.
+    let dbUrl = null;
+    let dbToken = null;
+
+    if (isTursoConfigured()) {
+      const tursoDb = await createTursoDatabase(workspaceId);
+      const token = await createTursoToken(tursoDb.dbName);
+      dbUrl = tursoDb.dbUrl;
+      dbToken = token;
+    }
+
     await controlDb.execute({
-      sql: "INSERT INTO workspaces (id, user_id, name) VALUES (?, ?, ?)",
-      args: [workspaceId, userId, workspaceName],
+      sql: "INSERT INTO workspaces (id, user_id, name, db_url, db_token) VALUES (?, ?, ?, ?, ?)",
+      args: [workspaceId, userId, workspaceName, dbUrl, dbToken],
     });
 
     // Initialize workspace schema + seed working memory
-    const wsDb = getWorkspaceDb(null, null);
+    const wsDb = getWorkspaceDb(dbUrl, dbToken);
     await initSchema(wsDb, "workspace");
     await seedWorkingMemory(wsDb);
 

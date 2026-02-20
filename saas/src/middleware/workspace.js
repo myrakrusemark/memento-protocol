@@ -101,6 +101,25 @@ export function workspaceMiddleware() {
       workspaceId = result.rows[0].id;
       dbUrl = result.rows[0].db_url;
       dbToken = result.rows[0].db_token;
+
+      // Retroactive fix: provision a Turso database for workspaces created
+      // before signup was fixed to provision at creation time.
+      if (!dbUrl && isTursoConfigured()) {
+        const tursoDb = await createTursoDatabase(workspaceId);
+        const token = await createTursoToken(tursoDb.dbName);
+        dbUrl = tursoDb.dbUrl;
+        dbToken = token;
+
+        await controlDb.execute({
+          sql: "UPDATE workspaces SET db_url = ?, db_token = ? WHERE id = ?",
+          args: [dbUrl, dbToken, workspaceId],
+        });
+
+        // Initialize schema and seed on the new database
+        const freshDb = getWorkspaceDb(dbUrl, dbToken);
+        await initSchema(freshDb, "workspace");
+        await seedWorkingMemory(freshDb);
+      }
     }
 
     // Get workspace DB client (uses Turso URL if available, falls back to dev DB)
