@@ -8,6 +8,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+---
+
+## [0.1.9] - 2026-02-20
+
+### Fixed
+- Auto-consolidation black hole: `POST /v1/consolidate` now writes the consolidated summary back to the `memories` table (visible to recall), consistent with `POST /v1/consolidate/group`. Previously, consolidated content was written only to the `consolidations` table and was invisible to all recall endpoints.
+- Misleading response message: now reads `"Consolidated N group(s) from M source memories into N new memory/memories."` instead of the ambiguous `"Consolidated N groups (M memories total)"` which counted inputs, not outputs.
+- Source memories' `consolidated_into` field now correctly points to the new memory ID (in `memories` table) rather than the consolidation record ID.
+
 ### Added
 - `memento_item_create`, `memento_item_list`, `memento_item_update`, `memento_item_delete` — structured working memory items with categories, priorities, statuses, and next actions
 - `memento_consolidate` — merge 2+ overlapping memories into a single richer memory; originals deactivated, not deleted
