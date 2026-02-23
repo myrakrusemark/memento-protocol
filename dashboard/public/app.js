@@ -23,6 +23,7 @@ async function login(username, password) {
 
   showDashboard();
   loadStats();
+  loadInboxData();
 }
 
 async function logout() {
@@ -43,6 +44,64 @@ function showDashboard() {
 }
 
 // ─── Data Loading ────────────────────────────────────────────────────────────
+
+// ─── Tabs ─────────────────────────────────────────────────────────────────────
+
+document.querySelectorAll(".tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".tab-pane").forEach((p) => { p.hidden = true; });
+    btn.classList.add("active");
+    $(`#tab-${btn.dataset.tab}`).hidden = false;
+  });
+});
+
+async function loadInboxData() {
+  try {
+    const res = await fetch("/api/messages");
+    if (!res.ok) return;
+    const { contacts, subscribers } = await res.json();
+    renderContactTab(contacts);
+    renderEmailTab(subscribers);
+  } catch { /* non-fatal */ }
+}
+
+function renderContactTab(contacts) {
+  const count = contacts.length;
+  $("#tab-contact-count").textContent = count || "";
+  const list = $("#contact-list");
+  if (!count) {
+    list.innerHTML = `<p class="inbox-empty">No messages yet.</p>`;
+    return;
+  }
+  list.innerHTML = contacts.map((c) => `
+    <div class="inbox-row">
+      <div class="inbox-meta">
+        <span class="inbox-name">${esc(c.name || "Unknown")}</span>
+        <span class="inbox-time">${formatTimestamp(c.timestamp)}</span>
+      </div>
+      <div class="inbox-body">${esc(c.message || "")}</div>
+    </div>
+  `).join("");
+}
+
+function renderEmailTab(subscribers) {
+  const count = subscribers.length;
+  $("#tab-email-count").textContent = count || "";
+  const list = $("#email-list");
+  if (!count) {
+    list.innerHTML = `<p class="inbox-empty">No subscribers yet.</p>`;
+    return;
+  }
+  list.innerHTML = subscribers.map((s) => `
+    <div class="inbox-row">
+      <div class="inbox-meta">
+        <span class="inbox-name">${esc(s.email || "")}</span>
+        <span class="inbox-time">${formatTimestamp(s.timestamp)}</span>
+      </div>
+    </div>
+  `).join("");
+}
 
 async function loadStats() {
   const loading = $("#loading");
@@ -296,6 +355,7 @@ $("#refresh-btn").addEventListener("click", loadStats);
       $("#dashboard").hidden = false;
       $("#last-updated").textContent = `Updated ${new Date().toLocaleTimeString()}`;
       refreshTimer = setInterval(loadStats, REFRESH_INTERVAL_MS);
+      loadInboxData();
     } else {
       showLogin();
     }

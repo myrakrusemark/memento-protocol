@@ -200,6 +200,7 @@ context.post("/", async (c) => {
         type: r.memory.type,
         tags: safeParseTags(r.memory.tags),
         score: Math.round(r.score * 1000) / 1000,
+        created_at: r.memory.created_at || null,
       };
       if (isHybrid) {
         match.keyword_score = Math.round((r.keywordScore || 0) * 1000) / 1000;

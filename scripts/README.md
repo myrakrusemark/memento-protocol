@@ -107,12 +107,29 @@ Fires after every assistant response. Uses the assistant's own output as the rec
 
 ### `memento-precompact-distill.sh` — PreCompact
 
-Fires before Claude Code compresses the conversation. Parses the full JSONL transcript and sends it to `/v1/distill`, which extracts novel facts, decisions, and observations as stored memories.
+Fires before Claude Code compresses the conversation. Parses the full JSONL transcript and extracts novel facts, decisions, and observations as stored memories. Supports two extraction backends:
 
-- **Timeout:** 30 seconds
+- **`"llama"` (default)** — sends transcript to `/v1/distill`, which runs Llama 3.1 8B via Cloudflare Workers AI. Free.
+- **`"claude-code"`** — runs `claude -p` locally for better extraction quality, then pushes to `/v1/memories/ingest`. Uses API credits.
+
+Configure the model in `.memento.json`:
+
+```json
+{
+  "hooks": {
+    "precompact-distill": {
+      "enabled": true,
+      "model": "claude-code"
+    }
+  }
+}
+```
+
+- **Timeout:** 30s (llama) / 60s (claude-code)
 - **User sees:** "Memento Distill: extracted N memories"
 - **Minimum threshold:** Transcripts under 200 characters are skipped
 - **Transcript parsing:** Extracts user and assistant text from the JSONL format
+- **Source tag:** `source:distill:llama-3.1-8b` or `source:distill:claude-code` — identifies which model extracted each memory
 
 **Output format:** JSON with `systemMessage` only (informational).
 

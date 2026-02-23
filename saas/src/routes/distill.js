@@ -179,7 +179,7 @@ distill.post("/", async (c) => {
     const entryTags = Array.isArray(entry.tags)
       ? entry.tags.filter((t) => typeof t === "string").map((t) => t.toLowerCase()).slice(0, 7)
       : [];
-    const tags = JSON.stringify([...entryTags, "source:distill"]);
+    const tags = JSON.stringify([...entryTags, "source:distill:llama-3.1-8b"]);
 
     const storedContent = encKey ? await encryptField(entry.content, encKey) : entry.content;
     await db.execute({

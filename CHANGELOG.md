@@ -8,6 +8,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ## [Unreleased]
 
+### Added
+- `precompact-distill` hook supports `model` config option in `.memento.json`: `"llama"` (default, free via Cloudflare Workers AI) or `"claude-code"` (runs `claude -p` locally, better extraction quality, uses API credits).
+- `/v1/context` memory matches now include `created_at` timestamp — enables contradiction resolution and temporal reasoning when comparing recalled memories.
+
+### Changed
+- `source:distill` tag renamed to `source:distill:llama-3.1-8b` to encode model provenance. The `claude-code` path tags memories `source:distill:claude-code`.
+
 ---
 
 ## [0.2.0] - 2026-02-20

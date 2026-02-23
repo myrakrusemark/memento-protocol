@@ -54,6 +54,7 @@ print('true' if hook.get('enabled', True) else 'false')
     MEMENTO_API_KEY="${MEMENTO_API_KEY:-$(echo "$CONFIG_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('apiKey',''))" 2>/dev/null)}"
     MEMENTO_API_URL="${MEMENTO_API_URL:-$(echo "$CONFIG_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('apiUrl',''))" 2>/dev/null)}"
     MEMENTO_WORKSPACE="${MEMENTO_WORKSPACE:-$(echo "$CONFIG_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('workspace',''))" 2>/dev/null)}"
+    DISTILL_MODEL="${DISTILL_MODEL:-$(echo "$CONFIG_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('hooks',{}).get('precompact-distill',{}).get('model','llama'))" 2>/dev/null)}"
 fi
 # --- End config block ---
 
@@ -81,6 +82,99 @@ if [ ${#TRANSCRIPT_TEXT} -lt 200 ]; then
     exit 0  # Too short to distill anything useful
 fi
 
+DISTILL_MODEL="${DISTILL_MODEL:-llama}"
+
+# claude-code path: run extraction locally via claude -p, push to /v1/memories/ingest
+if [ "$DISTILL_MODEL" = "claude-code" ]; then
+    PROMPT_FILE=$(mktemp)
+    cat > "$PROMPT_FILE" << 'DISTILL_PROMPT'
+You are a memory extraction system. Read the conversation transcript below and extract discrete memories worth remembering long-term.
+
+Rules:
+- Extract ONLY genuinely new information — facts, decisions, preferences, instructions, observations, or insights.
+- Each memory should be a single, self-contained statement.
+- Each memory needs a type: "fact", "decision", "instruction", "observation", or "preference".
+- Each memory needs tags (max 6, lowercase, hyphenated). Do NOT include a source tag.
+- If the conversation is trivial, return an empty array.
+- Return ONLY valid JSON — no markdown, no commentary, no code fences.
+
+Memory writing style:
+- Lead with the most searchable term: entity names, project names, specific identifiers.
+- Preserve exact values verbatim: IDs, amounts, measurements, dates.
+- Use direct active phrasing.
+
+Output format:
+[{"content": "...", "type": "fact", "tags": ["tag1", "tag2"]}]
+
+If nothing novel to extract, return: []
+
+---
+TRANSCRIPT:
+DISTILL_PROMPT
+    echo "$TRANSCRIPT_TEXT" >> "$PROMPT_FILE"
+
+    RAW_OUTPUT=$(claude -p "$(cat "$PROMPT_FILE")" 2>/dev/null)
+    rm -f "$PROMPT_FILE"
+
+    CC_SUMMARY=$(echo "$RAW_OUTPUT" | python3 -c "
+import json, sys, re
+from collections import Counter
+raw = sys.stdin.read()
+cleaned = re.sub(r'^\x60{3}(?:json)?\s*', '', raw.strip(), flags=re.IGNORECASE)
+cleaned = re.sub(r'\s*\x60{3}$', '', cleaned.strip())
+try:
+    parsed = json.loads(cleaned.strip())
+except Exception:
+    match = re.search(r'\[[\s\S]*\]', raw)
+    try:
+        parsed = json.loads(match.group(0)) if match else []
+    except Exception:
+        parsed = []
+if not isinstance(parsed, list):
+    parsed = []
+count = len(parsed)
+if count == 0:
+    print('0|')
+else:
+    type_counts = Counter(m.get('type', 'unknown') for m in parsed)
+    breakdown = ', '.join(f\"{v} {k}{'s' if v != 1 else ''}\" for k, v in sorted(type_counts.items()))
+    print(f'{count}|{breakdown}')
+" 2>/dev/null)
+
+    MEMORY_COUNT=$(echo "$CC_SUMMARY" | cut -d'|' -f1)
+    TYPE_BREAKDOWN=$(echo "$CC_SUMMARY" | cut -d'|' -f2)
+
+    if [ "${MEMORY_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+        INGEST_PAYLOAD=$(echo "$RAW_OUTPUT" | python3 -c "
+import json, sys, re
+raw = sys.stdin.read()
+cleaned = re.sub(r'^\x60{3}(?:json)?\s*', '', raw.strip(), flags=re.IGNORECASE)
+cleaned = re.sub(r'\s*\x60{3}$', '', cleaned.strip())
+try:
+    parsed = json.loads(cleaned.strip())
+except Exception:
+    match = re.search(r'\[[\s\S]*\]', raw)
+    parsed = json.loads(match.group(0)) if match else []
+print(json.dumps({'memories': parsed, 'source': 'distill:claude-code'}))
+" 2>/dev/null)
+
+        curl -s --max-time 60 \
+            -X POST \
+            -H "Authorization: Bearer $MEMENTO_KEY" \
+            -H "X-Memento-Workspace: $MEMENTO_WS" \
+            -H "Content-Type: application/json" \
+            -d "$INGEST_PAYLOAD" \
+            "$MEMENTO_API/v1/memories/ingest" > /dev/null 2>&1
+
+        python3 -c "import json,sys; print(json.dumps({'systemMessage': sys.argv[1]}))" \
+            "Memento Distill (claude-code): ${MEMORY_COUNT} memories — ${TYPE_BREAKDOWN}"
+    else
+        python3 -c "import json,sys; print(json.dumps({'systemMessage': sys.argv[1]}))" \
+            "Memento Distill (claude-code): no memories extracted"
+    fi
+    exit 0
+fi
+
 # Send to Memento SaaS /v1/distill
 RESPONSE=$(curl -s --max-time 30 \
     -X POST \
@@ -91,27 +185,32 @@ RESPONSE=$(curl -s --max-time 30 \
     "$MEMENTO_API/v1/distill" 2>/dev/null)
 
 # Report results
-MEMORY_COUNT=$(echo "$RESPONSE" | python3 -c "
+DISTILL_SUMMARY=$(echo "$RESPONSE" | python3 -c "
 import json, sys
+from collections import Counter
 try:
     data = json.load(sys.stdin)
-    print(len(data.get('memories', [])))
+    memories = data.get('memories', [])
+    count = len(memories)
+    if count == 0:
+        print('0|')
+    else:
+        type_counts = Counter(m.get('type', 'unknown') for m in memories)
+        breakdown = ', '.join(f\"{v} {k}{'s' if v != 1 else ''}\" for k, v in sorted(type_counts.items()))
+        print(f'{count}|{breakdown}')
 except Exception:
-    print('0')
+    print('0|')
 " 2>/dev/null)
 
-if [ "$MEMORY_COUNT" -gt 0 ] 2>/dev/null; then
-    python3 -c "
-import json, sys
-msg = sys.argv[1]
-print(json.dumps({'systemMessage': msg}))
-" "Memento Distill: extracted ${MEMORY_COUNT} memories"
+MEMORY_COUNT=$(echo "$DISTILL_SUMMARY" | cut -d'|' -f1)
+TYPE_BREAKDOWN=$(echo "$DISTILL_SUMMARY" | cut -d'|' -f2)
+
+if [ "${MEMORY_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+    python3 -c "import json,sys; print(json.dumps({'systemMessage': sys.argv[1]}))" \
+        "Memento Distill: ${MEMORY_COUNT} memories — ${TYPE_BREAKDOWN}"
 else
-    python3 -c "
-import json, sys
-msg = sys.argv[1]
-print(json.dumps({'systemMessage': msg}))
-" "Memento Distill: no memories extracted"
+    python3 -c "import json,sys; print(json.dumps({'systemMessage': sys.argv[1]}))" \
+        "Memento Distill: no memories extracted"
 fi
 
 exit 0

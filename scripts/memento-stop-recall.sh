@@ -96,7 +96,8 @@ try:
             tag_str = f' [{\", \".join(tags)}]' if tags else ''
             content = m['content'][:${RECALL_MAX_LENGTH:-200}]
             score = m.get('score', '?')
-            lines.append(f'  {m[\"id\"]} ({m[\"type\"]}, {score}){tag_str} — {content}')
+            date_str = f' {m["created_at"][:10]}' if m.get('created_at') else ''
+            lines.append(f'  {m[\"id\"]} ({m[\"type\"]}, {score}{date_str}){tag_str} — {content}')
             count += 1
 
     skip_matches = data.get('skip_matches', [])

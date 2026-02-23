@@ -32,6 +32,8 @@ body {
 /* Login */
 
 .view { display: flex; }
+.view[hidden] { display: none; }
+.loading[hidden] { display: none; }
 #login-view {
   justify-content: center;
   align-items: center;
@@ -272,6 +274,91 @@ tr:hover td { background: var(--surface-hover); }
 }
 .badge-free { background: #2d3748; color: var(--text-muted); }
 .badge-full { background: #2d1f5e; color: var(--accent-light); }
+
+/* Tabs */
+
+.tab-bar {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin: -1.25rem -1.25rem 1.25rem;
+  padding: 0 1.25rem;
+}
+
+.tab-btn {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 500;
+  padding: 0.65rem 1rem;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.tab-btn:hover { color: var(--text); }
+
+.tab-btn.active {
+  color: var(--accent-light);
+  border-bottom-color: var(--accent);
+}
+
+.tab-count {
+  font-size: 0.72rem;
+  font-weight: 700;
+  background: rgba(108, 92, 231, 0.2);
+  color: var(--accent-light);
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+}
+
+/* Inbox list (contact + email tabs) */
+
+.inbox-list { display: flex; flex-direction: column; }
+
+.inbox-row {
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.inbox-row:last-child { border-bottom: none; }
+
+.inbox-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 0.2rem;
+}
+
+.inbox-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.inbox-time {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  margin-left: 1rem;
+}
+
+.inbox-body {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.inbox-empty {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  padding: 1.5rem 0;
+  text-align: center;
+}
 
 /* Responsive */
 

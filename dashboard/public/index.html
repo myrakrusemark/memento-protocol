@@ -79,23 +79,36 @@
         </div>
       </section>
 
-      <!-- Workspaces table -->
+      <!-- Tabbed bottom section -->
       <section class="table-section">
-        <h2>Workspaces</h2>
-        <div class="table-wrap">
-          <table id="workspaces-table">
-            <thead>
-              <tr>
-                <th>Workspace</th>
-                <th>Owner</th>
-                <th>Plan</th>
-                <th>Memories</th>
-                <th>Items</th>
-                <th>Last Active</th>
-              </tr>
-            </thead>
-            <tbody></tbody>
-          </table>
+        <div class="tab-bar">
+          <button class="tab-btn active" data-tab="workspaces">Workspaces</button>
+          <button class="tab-btn" data-tab="contact">
+            Contact <span id="tab-contact-count" class="tab-count"></span>
+          </button>
+          <button class="tab-btn" data-tab="email">
+            Email <span id="tab-email-count" class="tab-count"></span>
+          </button>
+        </div>
+
+        <div id="tab-workspaces" class="tab-pane">
+          <div class="table-wrap">
+            <table id="workspaces-table">
+              <thead><tr>
+                <th>Workspace</th><th>Owner</th><th>Plan</th>
+                <th>Memories</th><th>Items</th><th>Last Active</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="tab-contact" class="tab-pane" hidden>
+          <div id="contact-list" class="inbox-list"></div>
+        </div>
+
+        <div id="tab-email" class="tab-pane" hidden>
+          <div id="email-list" class="inbox-list"></div>
         </div>
       </section>
     </main>
