@@ -1,6 +1,6 @@
 {
   "name": "memento-mcp",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "mcpName": "io.github.myrakrusemark/memento-protocol",
   "description": "The Memento Protocol — persistent memory for AI agents",
   "type": "module",

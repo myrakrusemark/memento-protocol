@@ -17,6 +17,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ---
 
+## [0.2.3] - 2026-02-24
+
+### Changed
+- `memento_recall` and `memento_item_list`: replaced `peek_workspaces` array parameter with a single `workspace` string filter. Three modes — omit for default (own + config-level peek workspaces merged), `"<home>"` for own workspace only, or a workspace name (e.g. `"fathom"`) to search only that workspace. SaaS API unchanged; all translation happens in the MCP tool layer.
+
+---
+
 ## [0.2.0] - 2026-02-20
 
 ### Added

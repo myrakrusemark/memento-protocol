@@ -17,11 +17,12 @@
 import { StorageInterface } from "./interface.js";
 
 export class HostedStorageAdapter extends StorageInterface {
-  constructor({ apiKey, apiUrl, workspace }) {
+  constructor({ apiKey, apiUrl, workspace, peekWorkspaces }) {
     super();
     this.apiKey = apiKey;
     this.apiUrl = apiUrl.replace(/\/$/, ""); // strip trailing slash
     this.workspace = workspace || "default";
+    this.peekWorkspaces = peekWorkspaces || [];
   }
 
   /**
@@ -108,17 +109,42 @@ export class HostedStorageAdapter extends StorageInterface {
     return { _raw: true, text, isError: false };
   }
 
-  async recallMemories(_wsPath, { query, tags, type, limit }) {
+  async recallMemories(_wsPath, { query, tags, type, limit, workspace }) {
     const params = new URLSearchParams({ query, format: "json" });
     if (tags?.length) params.set("tags", tags.join(","));
     if (type) params.set("type", type);
     if (limit) params.set("limit", String(limit));
 
-    const json = await this._fetchJson(
-      "GET",
-      `/v1/memories/recall?${params}`
-    );
+    let targetWorkspace = null;
+    if (!workspace) {
+      // Default: include config-level peek workspaces
+      if (this.peekWorkspaces?.length) {
+        params.set("peek_workspaces", this.peekWorkspaces.join(","));
+      }
+    } else if (workspace === "<home>") {
+      // Focus: no peek param — own workspace only
+    } else {
+      // Targeted: peek into specific workspace, filter own results out
+      targetWorkspace = workspace;
+      params.set("peek_workspaces", workspace);
+    }
+
+    const json = await this._fetchJson("GET", `/v1/memories/recall?${params}`);
     if (json.error) return { error: json.error };
+
+    if (targetWorkspace && json.memories) {
+      json.memories = json.memories.filter(m => m.workspace === targetWorkspace);
+      if (json.memories.length === 0) {
+        json.text = `No memories found matching "${query}" in workspace "${targetWorkspace}".`;
+      } else {
+        const lines = json.memories.map(m => {
+          const tagStr = m.tags?.length ? ` [${m.tags.join(", ")}]` : "";
+          return `**${m.id}** (${m.type})${tagStr} [${targetWorkspace}]\n${m.content}`;
+        }).join("\n\n---\n\n");
+        json.text = `Found ${json.memories.length} memor${json.memories.length === 1 ? "y" : "ies"} in workspace "${targetWorkspace}":\n\n${lines}`;
+      }
+    }
+
     return { _raw: true, text: json.text, memories: json.memories || [], isError: false };
   }
 
@@ -206,10 +232,31 @@ export class HostedStorageAdapter extends StorageInterface {
     if (filters.category) params.set("category", filters.category);
     if (filters.status) params.set("status", filters.status);
     if (filters.query) params.set("q", filters.query);
+
+    let targetWorkspace = null;
+    if (!filters.workspace) {
+      // Default: include config-level peek workspaces
+      if (this.peekWorkspaces?.length) {
+        params.set("peek_workspaces", this.peekWorkspaces.join(","));
+      }
+    } else if (filters.workspace === "<home>") {
+      // Focus: no peek param — own workspace only
+    } else {
+      // Targeted: peek into specific workspace, filter own results out
+      targetWorkspace = filters.workspace;
+      params.set("peek_workspaces", filters.workspace);
+    }
+
     const qs = params.toString();
     const path = `/v1/working-memory/items${qs ? `?${qs}` : ""}`;
     const res = await this._fetchJson("GET", path);
     if (res.error) return { error: res.error };
+
+    if (targetWorkspace && res.items) {
+      res.items = res.items.filter(item => item.workspace === targetWorkspace);
+      res.total = res.items.length;
+    }
+
     return res;
   }
 
