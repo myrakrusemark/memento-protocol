@@ -119,6 +119,61 @@ describe("skip list routes", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // GET /v1/skip-list (list all)
+  // ---------------------------------------------------------------------------
+
+  it("GET /v1/skip-list — lists entries with IDs", async () => {
+    await h.request("POST", "/v1/skip-list", {
+      item: "entry one",
+      reason: "testing list",
+      expires: "2099-12-31",
+    });
+    await h.request("POST", "/v1/skip-list", {
+      item: "entry two",
+      reason: "also testing",
+      expires: "2099-12-31",
+    });
+
+    const res = await h.request("GET", "/v1/skip-list");
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.total, 2);
+    assert.equal(body.entries.length, 2);
+    // Each entry should have an id, item, reason, expires_at
+    for (const entry of body.entries) {
+      assert.ok(entry.id);
+      assert.ok(entry.item);
+      assert.ok(entry.reason);
+      assert.ok(entry.expires_at);
+    }
+  });
+
+  it("GET /v1/skip-list — auto-purges expired entries", async () => {
+    await h.request("POST", "/v1/skip-list", {
+      item: "expired skip",
+      reason: "was temporary",
+      expires: "2020-01-01",
+    });
+    await h.request("POST", "/v1/skip-list", {
+      item: "active skip",
+      reason: "still relevant",
+      expires: "2099-12-31",
+    });
+
+    const res = await h.request("GET", "/v1/skip-list");
+    const body = await res.json();
+    assert.equal(body.total, 1);
+    assert.equal(body.entries[0].item, "active skip");
+  });
+
+  it("GET /v1/skip-list — returns empty array when no entries", async () => {
+    const res = await h.request("GET", "/v1/skip-list");
+    const body = await res.json();
+    assert.equal(body.total, 0);
+    assert.deepEqual(body.entries, []);
+  });
+
+  // ---------------------------------------------------------------------------
   // DELETE /v1/skip-list/:id
   // ---------------------------------------------------------------------------
 

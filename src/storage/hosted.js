@@ -149,6 +149,24 @@ export class HostedStorageAdapter extends StorageInterface {
     return { _raw: true, text, isError: false };
   }
 
+  async listSkips(_wsPath) {
+    const json = await this._fetchJson("GET", "/v1/skip-list");
+    if (json.error) return { error: json.error };
+    return json;
+  }
+
+  async deleteSkip(_wsPath, id) {
+    const { text, isError } = await this._fetch("DELETE", `/v1/skip-list/${id}`);
+    if (isError) return { error: text };
+    return { _raw: true, text, isError: false };
+  }
+
+  async deleteMemory(_wsPath, id) {
+    const { text, isError } = await this._fetch("DELETE", `/v1/memories/${id}`);
+    if (isError) return { error: text };
+    return { _raw: true, text, isError: false };
+  }
+
   async checkSkip(_wsPath, query) {
     const params = new URLSearchParams({ query });
     const { text, isError } = await this._fetch(

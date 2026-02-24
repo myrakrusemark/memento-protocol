@@ -80,6 +80,35 @@ export class StorageInterface {
   }
 
   /**
+   * List all skip list entries with IDs. Auto-purges expired entries.
+   * @param {string} wsPath - Resolved workspace path
+   * @returns {Promise<{ entries?: Array, total?: number, error?: string }>}
+   */
+  async listSkips(wsPath) {
+    throw new Error("Not implemented");
+  }
+
+  /**
+   * Remove a skip list entry by ID.
+   * @param {string} wsPath - Resolved workspace path
+   * @param {string} id - Skip entry ID
+   * @returns {Promise<{ _raw?: boolean, text?: string, error?: string }>}
+   */
+  async deleteSkip(wsPath, id) {
+    throw new Error("Not implemented");
+  }
+
+  /**
+   * Permanently delete a memory by ID.
+   * @param {string} wsPath - Resolved workspace path
+   * @param {string} id - Memory ID
+   * @returns {Promise<{ _raw?: boolean, text?: string, error?: string }>}
+   */
+  async deleteMemory(wsPath, id) {
+    throw new Error("Not implemented");
+  }
+
+  /**
    * Report memory system health and stats.
    * @param {string} wsPath - Resolved workspace path
    * @returns {Promise<{ stats?: object, formatted?: string, error?: string }>}

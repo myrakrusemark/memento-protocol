@@ -523,6 +523,108 @@ Use this before routine checks (news, weather, HN stories) to avoid re-reading t
 );
 
 // ---------------------------------------------------------------------------
+// Tool: memento_skip_list
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "memento_skip_list",
+  `List all skip list entries with their IDs. Use this to find entry IDs for removal with memento_skip_remove.
+
+Auto-purges expired entries before returning results.`,
+  {},
+  async () => {
+    const result = await storage.listSkips(null);
+
+    if (result.error) {
+      return { content: [{ type: "text", text: result.error }], isError: true };
+    }
+
+    if (!result.entries || result.entries.length === 0) {
+      return {
+        content: [{ type: "text", text: "Skip list is empty." }],
+      };
+    }
+
+    const formatted = result.entries
+      .map((e) => `**${e.id}** "${e.item}"\n  Reason: ${e.reason}\n  Expires: ${e.expires_at}`)
+      .join("\n\n");
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: `${result.total} skip list entr${result.total === 1 ? "y" : "ies"}:\n\n${formatted}`,
+        },
+      ],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: memento_skip_remove
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "memento_skip_remove",
+  `Remove a skip list entry by ID. Use memento_skip_list first to find the entry ID.
+
+Use this when a skip condition has been resolved early or was added in error.`,
+  {
+    id: z.string().describe("Skip entry ID to remove"),
+  },
+  async ({ id }) => {
+    const result = await storage.deleteSkip(null, id);
+
+    if (result._raw) {
+      return {
+        content: [{ type: "text", text: result.text }],
+        ...(result.isError ? { isError: true } : {}),
+      };
+    }
+
+    if (result.error) {
+      return { content: [{ type: "text", text: result.error }], isError: true };
+    }
+
+    return {
+      content: [{ type: "text", text: `Skip entry ${id} removed.` }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
+// Tool: memento_memory_delete
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "memento_memory_delete",
+  `Permanently delete a memory by ID. Prefer memento_consolidate over deletion for most cases — consolidation preserves history while sharpening recall.
+
+Use deletion only for memories that are incorrect, contain errors, or should never have been stored.`,
+  {
+    id: z.string().describe("Memory ID to delete"),
+  },
+  async ({ id }) => {
+    const result = await storage.deleteMemory(null, id);
+
+    if (result._raw) {
+      return {
+        content: [{ type: "text", text: result.text }],
+        ...(result.isError ? { isError: true } : {}),
+      };
+    }
+
+    if (result.error) {
+      return { content: [{ type: "text", text: result.error }], isError: true };
+    }
+
+    return {
+      content: [{ type: "text", text: `Memory ${id} deleted.` }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Tool: memento_health
 // ---------------------------------------------------------------------------
 

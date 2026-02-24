@@ -1,6 +1,7 @@
 /**
  * Skip list routes.
  *
+ * GET    /v1/skip-list       — List all skip list entries (auto-purges expired)
  * POST   /v1/skip-list       — Add an entry to the skip list
  * GET    /v1/skip-list/check — Check if a query matches the skip list
  * DELETE /v1/skip-list/:id   — Remove an entry from the skip list
@@ -22,6 +23,33 @@ function matchesAllWords(query, text) {
   const textLower = text.toLowerCase();
   return queryWords.every((word) => textLower.includes(word));
 }
+
+// GET /v1/skip-list — List all skip entries (auto-purges expired)
+skipList.get("/", async (c) => {
+  const db = c.get("workspaceDb");
+  const now = new Date().toISOString();
+
+  // Purge expired entries first
+  await db.execute({
+    sql: "DELETE FROM skip_list WHERE expires_at <= ?",
+    args: [now],
+  });
+
+  const result = await db.execute("SELECT id, item, reason, expires_at FROM skip_list ORDER BY added_at DESC");
+  const encKey = c.get("encryptionKey");
+
+  const entries = [];
+  for (const row of result.rows) {
+    entries.push({
+      id: row.id,
+      item: encKey ? await decryptField(row.item, encKey) : row.item,
+      reason: encKey ? await decryptField(row.reason, encKey) : row.reason,
+      expires_at: row.expires_at,
+    });
+  }
+
+  return c.json({ entries, total: entries.length });
+});
 
 // POST /v1/skip-list — Add skip entry
 skipList.post("/", async (c) => {
