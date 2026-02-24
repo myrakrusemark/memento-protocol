@@ -17,12 +17,11 @@
 import { StorageInterface } from "./interface.js";
 
 export class HostedStorageAdapter extends StorageInterface {
-  constructor({ apiKey, apiUrl, workspace, peekWorkspaces }) {
+  constructor({ apiKey, apiUrl, workspace }) {
     super();
     this.apiKey = apiKey;
     this.apiUrl = apiUrl.replace(/\/$/, ""); // strip trailing slash
     this.workspace = workspace || "default";
-    this.peekWorkspaces = peekWorkspaces || [];
   }
 
   /**
@@ -116,14 +115,7 @@ export class HostedStorageAdapter extends StorageInterface {
     if (limit) params.set("limit", String(limit));
 
     let targetWorkspace = null;
-    if (!workspace) {
-      // Default: include config-level peek workspaces
-      if (this.peekWorkspaces?.length) {
-        params.set("peek_workspaces", this.peekWorkspaces.join(","));
-      }
-    } else if (workspace === "<home>") {
-      // Focus: no peek param — own workspace only
-    } else {
+    if (workspace) {
       // Targeted: peek into specific workspace, filter own results out
       targetWorkspace = workspace;
       params.set("peek_workspaces", workspace);
@@ -234,14 +226,7 @@ export class HostedStorageAdapter extends StorageInterface {
     if (filters.query) params.set("q", filters.query);
 
     let targetWorkspace = null;
-    if (!filters.workspace) {
-      // Default: include config-level peek workspaces
-      if (this.peekWorkspaces?.length) {
-        params.set("peek_workspaces", this.peekWorkspaces.join(","));
-      }
-    } else if (filters.workspace === "<home>") {
-      // Focus: no peek param — own workspace only
-    } else {
+    if (filters.workspace) {
       // Targeted: peek into specific workspace, filter own results out
       targetWorkspace = filters.workspace;
       params.set("peek_workspaces", filters.workspace);

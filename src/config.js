@@ -68,8 +68,5 @@ export function resolveConfig(startDir = process.cwd()) {
     hooks[key] = { ...defaults, ...(fileConfig.hooks?.[key] || {}) };
   }
 
-  // peek_workspaces: array of workspace names to include in recall/list queries
-  const peek_workspaces = fileConfig.peek_workspaces || [];
-
-  return { apiKey, apiUrl, workspace, features, hooks, peek_workspaces };
+  return { apiKey, apiUrl, workspace, features, hooks };
 }

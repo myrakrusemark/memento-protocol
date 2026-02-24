@@ -39,7 +39,6 @@ const storage = new HostedStorageAdapter({
   apiKey: config.apiKey,
   apiUrl: config.apiUrl,
   workspace: config.workspace,
-  peekWorkspaces: config.peek_workspaces,
 });
 
 // ---------------------------------------------------------------------------
@@ -269,7 +268,7 @@ Results are ranked by relevance (keyword match + recency + access frequency). Ea
       .optional()
       .describe("Filter by type: fact, decision, observation, instruction"),
     limit: z.number().optional().describe("Max results (default: 10)"),
-    workspace: z.string().optional().describe('Filter which workspace(s) to search. Omit for default (own + peeked workspaces merged). Set to "<home>" to search ONLY your own workspace. Set to a workspace name (e.g. "fathom") to search ONLY that workspace.'),
+    workspace: z.string().optional().describe('Omit to search your own workspace. Set to a workspace name (e.g. "fathom") to search that workspace instead.'),
   },
   async ({ query, tags, type, limit, workspace }) => {
     const result = await storage.recallMemories(null, { query, tags, type, limit, workspace });
@@ -814,7 +813,7 @@ server.tool(
       .optional()
       .describe("Filter by status"),
     query: z.string().optional().describe("Search title and content"),
-    workspace: z.string().optional().describe('Filter which workspace(s) to search. Omit for default (own + peeked workspaces merged). Set to "<home>" to search ONLY your own workspace. Set to a workspace name (e.g. "fathom") to search ONLY that workspace.'),
+    workspace: z.string().optional().describe('Omit to search your own workspace. Set to a workspace name (e.g. "fathom") to search that workspace instead.'),
   },
   async ({ category, status, query, workspace }) => {
     const result = await storage.listItems(null, { category, status, query, workspace });
