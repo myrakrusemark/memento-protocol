@@ -8,7 +8,8 @@
 import { Hono } from "hono";
 import { scoreAndRankMemories, hybridRank } from "../services/scoring.js";
 import { semanticSearch } from "../services/embeddings.js";
-import { decryptField } from "../services/crypto.js";
+import { decryptField, getWorkspaceKey } from "../services/crypto.js";
+import { getControlDb, getWorkspaceDb } from "../db/connection.js";
 
 const context = new Hono();
 
@@ -57,6 +58,40 @@ context.post("/", async (c) => {
   const encKey = c.get("encryptionKey");
   const result = { meta: { workspace: workspaceName, last_updated: nowISO } };
 
+  // --- Resolve peek workspaces from body (POST doesn't use query params) ---
+  let peekDbs = c.get("peekDbs"); // may already be set by middleware from query/header
+  const bodyPeekWorkspaces = Array.isArray(body.peek_workspaces) ? body.peek_workspaces : [];
+
+  if (!peekDbs && bodyPeekWorkspaces.length > 0) {
+    if (bodyPeekWorkspaces.length > 5) {
+      return c.json({ error: "Too many peek workspaces. Maximum is 5." }, 400);
+    }
+
+    const userId = c.get("userId");
+    const controlDb = getControlDb();
+    peekDbs = new Map();
+
+    for (const name of bodyPeekWorkspaces) {
+      if (typeof name !== "string" || !name.trim()) continue;
+      const trimmed = name.trim();
+      const peekResult = await controlDb.execute({
+        sql: "SELECT id, db_url, db_token FROM workspaces WHERE user_id = ? AND name = ?",
+        args: [userId, trimmed],
+      });
+      if (peekResult.rows.length === 0) continue;
+
+      const peekRow = peekResult.rows[0];
+      const peekWsDb = getWorkspaceDb(peekRow.db_url, peekRow.db_token);
+      const peekEncKey = await getWorkspaceKey(peekRow.id, c.env, controlDb).catch(() => null);
+      peekDbs.set(trimmed, { db: peekWsDb, encKey: peekEncKey });
+    }
+  }
+
+  const peekedWorkspaceNames = peekDbs ? [...peekDbs.keys()] : [];
+  if (peekedWorkspaceNames.length > 0) {
+    result.meta.peeked_workspaces = peekedWorkspaceNames;
+  }
+
   // 1. Working memory items
   if (include.includes("working_memory")) {
     const itemsResult = await db.execute(
@@ -77,6 +112,34 @@ context.post("/", async (c) => {
         content: encKey ? await decryptField(row.content, encKey) : row.content,
         next_action: row.next_action && encKey ? await decryptField(row.next_action, encKey) : row.next_action,
         tags: safeParseTags(row.tags),
+      });
+    }
+
+    // Merge peeked workspace items
+    if (peekDbs && peekDbs.size > 0) {
+      for (const [wsName, { db: peekDb, encKey: peekEncKey }] of peekDbs) {
+        const peekItemsResult = await peekDb.execute(
+          `SELECT * FROM working_memory_items
+           WHERE status IN ('active', 'paused')
+           ORDER BY priority DESC, created_at DESC`
+        );
+
+        for (const row of peekItemsResult.rows) {
+          decryptedItems.push({
+            ...row,
+            title: peekEncKey ? await decryptField(row.title, peekEncKey) : row.title,
+            content: peekEncKey ? await decryptField(row.content, peekEncKey) : row.content,
+            next_action: row.next_action && peekEncKey ? await decryptField(row.next_action, peekEncKey) : row.next_action,
+            tags: safeParseTags(row.tags),
+            workspace: wsName,
+          });
+        }
+      }
+
+      // Re-sort merged items
+      decryptedItems.sort((a, b) => {
+        if (b.priority !== a.priority) return b.priority - a.priority;
+        return new Date(b.created_at) - new Date(a.created_at);
       });
     }
 
@@ -178,10 +241,50 @@ context.post("/", async (c) => {
       topResults = filteredKeyword;
     }
 
-    // Log access for scored results (fire-and-forget)
+    // --- Merge peeked workspace memories ---
+    if (peekDbs && peekDbs.size > 0) {
+      for (const [wsName, { db: peekDb, encKey: peekEncKey }] of peekDbs) {
+        const peekMemResult = await peekDb.execute({
+          sql: `SELECT id, content, type, tags, created_at, expires_at,
+                       access_count, last_accessed_at, linkages
+                FROM memories
+                WHERE consolidated = 0
+                  AND (expires_at IS NULL OR expires_at > ?)
+                ORDER BY created_at DESC`,
+          args: [nowISO],
+        });
+
+        if (peekEncKey) {
+          for (const row of peekMemResult.rows) {
+            row.content = await decryptField(row.content, peekEncKey);
+          }
+        }
+
+        // Tag each row with the workspace
+        for (const row of peekMemResult.rows) {
+          row._peekWorkspace = wsName;
+        }
+
+        const peekScored = scoreAndRankMemories(peekMemResult.rows, message, now, 20);
+        for (const r of peekScored) {
+          r.memory._peekWorkspace = wsName;
+          topResults.push(r);
+        }
+      }
+
+      // Re-sort and limit merged results
+      topResults.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return new Date(b.memory.created_at) - new Date(a.memory.created_at);
+      });
+      topResults = topResults.slice(0, 20);
+    }
+
+    // Log access for scored results (fire-and-forget) — local workspace only
     // Skip when track_access: false — used by benchmarks to avoid contaminating scores.
     if (trackAccess) {
       for (const r of topResults) {
+        if (r.memory._peekWorkspace) continue;
         db.execute({
           sql: "INSERT INTO access_log (memory_id, query) VALUES (?, ?)",
           args: [r.memory.id, message.slice(0, 200)],
@@ -205,6 +308,9 @@ context.post("/", async (c) => {
       if (isHybrid) {
         match.keyword_score = Math.round((r.keywordScore || 0) * 1000) / 1000;
         match.vector_score = Math.round((r.vectorScore || 0) * 1000) / 1000;
+      }
+      if (r.memory._peekWorkspace) {
+        match.workspace = r.memory._peekWorkspace;
       }
       return match;
     });
@@ -239,7 +345,7 @@ context.post("/", async (c) => {
     result.meta.memory_count = countResult.rows[0].count;
   }
 
-  // 3. Skip list check
+  // 3. Skip list check (LOCAL ONLY — no peek)
   if (include.includes("skip_list") && message) {
     // Purge expired
     await db.execute({
@@ -275,7 +381,7 @@ context.post("/", async (c) => {
     result.skip_matches = skipMatches;
   }
 
-  // 4. Identity crystal
+  // 4. Identity crystal (LOCAL ONLY — no peek)
   if (include.includes("identity")) {
     const identityResult = await db.execute(
       "SELECT crystal FROM identity_snapshots ORDER BY created_at DESC LIMIT 1"

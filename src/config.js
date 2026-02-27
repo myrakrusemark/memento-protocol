@@ -19,6 +19,7 @@ export const DEFAULTS = {
     "userprompt-recall": { enabled: true, limit: 5, maxLength: 200 },
     "stop-recall": { enabled: true, limit: 5, maxLength: 200 },
     "precompact-distill": { enabled: true },
+    "sessionstart-identity": { enabled: true },
   },
 };
 

@@ -46,7 +46,7 @@ export function createApp() {
     "*",
     cors({
       origin: ["https://hifathom.com", "https://fathoms-log.pages.dev", "http://localhost:4321", "http://localhost:4242"],
-      allowHeaders: ["Content-Type", "Authorization", "X-Memento-Workspace"],
+      allowHeaders: ["Content-Type", "Authorization", "X-Memento-Workspace", "X-Memento-Peek-Workspaces"],
       allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     })
   );

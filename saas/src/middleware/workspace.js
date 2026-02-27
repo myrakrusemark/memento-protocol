@@ -139,6 +139,39 @@ export function workspaceMiddleware() {
     const encKey = await getWorkspaceKey(workspaceId, c.env, controlDb).catch(() => null);
     c.set("encryptionKey", encKey);
 
+    // --- Cross-workspace peek support ---
+    const peekParam = c.req.query("peek_workspaces") || c.req.header("X-Memento-Peek-Workspaces") || "";
+    const peekNames = peekParam
+      ? peekParam.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+
+    if (peekNames.length > 5) {
+      return c.json(
+        { error: "Too many peek workspaces. Maximum is 5." },
+        400
+      );
+    }
+
+    if (peekNames.length > 0) {
+      const peekMap = new Map();
+      for (const name of peekNames) {
+        // Same user only — critical for security
+        const peekResult = await controlDb.execute({
+          sql: "SELECT id, db_url, db_token FROM workspaces WHERE user_id = ? AND name = ?",
+          args: [userId, name],
+        });
+        if (peekResult.rows.length === 0) continue; // silently skip non-existent
+
+        const peekRow = peekResult.rows[0];
+        const peekDb = getWorkspaceDb(peekRow.db_url, peekRow.db_token);
+        const peekEncKey = await getWorkspaceKey(peekRow.id, c.env, controlDb).catch(() => null);
+        peekMap.set(name, { db: peekDb, encKey: peekEncKey });
+      }
+      c.set("peekDbs", peekMap);
+    } else {
+      c.set("peekDbs", null);
+    }
+
     await next();
   };
 }

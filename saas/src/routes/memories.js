@@ -328,7 +328,58 @@ memories.get("/recall", async (c) => {
     args: [],
   });
   const threshold = parseFloat(thresholdResult.rows[0]?.value ?? "0") || 0;
-  const topResults = threshold > 0 ? scored.filter((r) => r.score >= threshold) : scored;
+  let topResults = threshold > 0 ? scored.filter((r) => r.score >= threshold) : scored;
+
+  // --- Cross-workspace peek: merge results from peeked workspaces ---
+  const peekDbs = c.get("peekDbs");
+  if (peekDbs && peekDbs.size > 0) {
+    for (const [wsName, { db: peekDb, encKey: peekEncKey }] of peekDbs) {
+      const peekResult = await peekDb.execute({
+        sql: `SELECT id, content, type, tags, created_at, expires_at,
+                     access_count, last_accessed_at, linkages, images
+              FROM memories
+              WHERE consolidated = 0
+                AND (expires_at IS NULL OR expires_at > ?)
+              ORDER BY created_at DESC`,
+        args: [now],
+      });
+
+      const peekCandidates = [];
+      for (const row of peekResult.rows) {
+        if (typeParam && row.type !== typeParam) continue;
+
+        if (tags && tags.length > 0) {
+          let memTags;
+          try {
+            memTags = JSON.parse(row.tags || "[]").map((t) => t.toLowerCase());
+          } catch {
+            memTags = [];
+          }
+          const hasTag = tags.some((t) => memTags.includes(t.toLowerCase()));
+          if (!hasTag) continue;
+        }
+
+        if (peekEncKey) {
+          row.content = await decryptField(row.content, peekEncKey);
+        }
+        row._peekWorkspace = wsName;
+        peekCandidates.push(row);
+      }
+
+      const peekScored = scoreAndRankMemories(peekCandidates, query, new Date(), limit);
+      for (const r of peekScored) {
+        r.memory._peekWorkspace = wsName;
+        topResults.push(r);
+      }
+    }
+
+    // Re-sort merged results by score desc, then apply limit
+    topResults.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return new Date(b.memory.created_at) - new Date(a.memory.created_at);
+    });
+    topResults = topResults.slice(0, limit);
+  }
 
   if (topResults.length === 0) {
     if (format === "json") {
@@ -339,9 +390,10 @@ memories.get("/recall", async (c) => {
     });
   }
 
-  // Log access for decay tracking (fire-and-forget)
+  // Log access for decay tracking (fire-and-forget) — local workspace only
   if (trackAccess) {
     for (const r of topResults) {
+      if (r.memory._peekWorkspace) continue; // don't log access for peeked memories
       db.execute({
         sql: `INSERT INTO access_log (memory_id, query) VALUES (?, ?)`,
         args: [r.memory.id, query],
@@ -365,6 +417,7 @@ memories.get("/recall", async (c) => {
       }
       const tagStr = memTags.length ? ` [${memTags.join(", ")}]` : "";
       const expStr = m.expires_at ? ` (expires: ${m.expires_at})` : "";
+      const wsStr = m._peekWorkspace ? ` [${m._peekWorkspace}]` : "";
       const memLinkages = safeParseJson(m.linkages, []);
       const linkStr = memLinkages.length
         ? `\nLinks: ${memLinkages.map((l) => {
@@ -377,7 +430,7 @@ memories.get("/recall", async (c) => {
       const imgStr = memImages.length
         ? `\nImages: [${memImages.length} image${memImages.length === 1 ? "" : "s"}] ${memImages.map((img) => `/v1/images/${img.key}`).join(", ")}`
         : "";
-      return `**${m.id}** (${m.type})${tagStr}${expStr}\n${m.content}${linkStr}${imgStr}`;
+      return `**${m.id}** (${m.type})${tagStr}${wsStr}${expStr}\n${m.content}${linkStr}${imgStr}`;
     })
     .join("\n\n---\n\n");
 
@@ -388,7 +441,7 @@ memories.get("/recall", async (c) => {
       text: summaryText,
       memories: topResults.map((r) => {
         const m = r.memory;
-        return {
+        const entry = {
           id: m.id,
           content: m.content,
           type: m.type,
@@ -397,6 +450,10 @@ memories.get("/recall", async (c) => {
           created_at: m.created_at,
           relevance_score: r.score,
         };
+        if (m._peekWorkspace) {
+          entry.workspace = m._peekWorkspace;
+        }
+        return entry;
       }),
     });
   }

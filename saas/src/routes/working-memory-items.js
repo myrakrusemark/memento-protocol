@@ -152,6 +152,59 @@ items.get("/", async (c) => {
     });
   }
 
+  // --- Cross-workspace peek: merge items from peeked workspaces ---
+  const peekDbs = c.get("peekDbs");
+  if (peekDbs && peekDbs.size > 0) {
+    for (const [wsName, { db: peekDb, encKey: peekEncKey }] of peekDbs) {
+      let peekSql = "SELECT * FROM working_memory_items WHERE 1=1";
+      const peekArgs = [];
+
+      if (category) {
+        peekSql += " AND category = ?";
+        peekArgs.push(category);
+      }
+      if (status) {
+        peekSql += " AND status = ?";
+        peekArgs.push(status);
+      }
+      if (q && !peekEncKey) {
+        peekSql += " AND (title LIKE ? OR content LIKE ?)";
+        peekArgs.push(`%${q}%`, `%${q}%`);
+      }
+      peekSql += " ORDER BY priority DESC, created_at DESC";
+
+      const peekResult = await peekDb.execute({ sql: peekSql, args: peekArgs });
+
+      for (const row of peekResult.rows) {
+        const decTitle = peekEncKey ? await decryptField(row.title, peekEncKey) : row.title;
+        const decContent = peekEncKey ? await decryptField(row.content, peekEncKey) : row.content;
+        const decNextAction = row.next_action && peekEncKey ? await decryptField(row.next_action, peekEncKey) : row.next_action;
+
+        if (q && peekEncKey) {
+          const qLower = q.toLowerCase();
+          if (!decTitle.toLowerCase().includes(qLower) && !decContent.toLowerCase().includes(qLower)) {
+            continue;
+          }
+        }
+
+        itemsList.push({
+          ...row,
+          title: decTitle,
+          content: decContent,
+          next_action: decNextAction,
+          tags: safeParseTags(row.tags),
+          workspace: wsName,
+        });
+      }
+    }
+
+    // Re-sort merged results
+    itemsList.sort((a, b) => {
+      if (b.priority !== a.priority) return b.priority - a.priority;
+      return new Date(b.created_at) - new Date(a.created_at);
+    });
+  }
+
   const total = itemsList.length;
 
   // Apply pagination

@@ -206,6 +206,14 @@ async function runInit() {
     "  PreCompact — distill memories before context compression?",
     true
   );
+  let enableSessionStart = false;
+  if (enableIdentity) {
+    enableSessionStart = await askYesNo(
+      rl,
+      "  SessionStart — inject identity + active items at startup?",
+      true
+    );
+  }
 
   rl.close();
 
@@ -221,6 +229,7 @@ async function runInit() {
       "userprompt-recall": { enabled: enableUserPrompt },
       "stop-recall": { enabled: enableStop },
       "precompact-distill": { enabled: enablePreCompact },
+      "sessionstart-identity": { enabled: enableSessionStart },
     },
   };
 
@@ -233,7 +242,7 @@ async function runInit() {
 
   // 6. Copy hook scripts into .memento/scripts/ for stable paths
   //    (pointing into the npx cache would break on cache clear or update)
-  const anyHookEnabled = enableUserPrompt || enableStop || enablePreCompact;
+  const anyHookEnabled = enableUserPrompt || enableStop || enablePreCompact || enableSessionStart;
   if (anyHookEnabled) {
     const pkgScriptsDir = path.resolve(__dirname, "..", "scripts");
     const localScriptsDir = path.join(cwd, ".memento", "scripts");
@@ -244,6 +253,7 @@ async function runInit() {
       enableUserPrompt && "memento-userprompt-recall.sh",
       enableStop && "memento-stop-recall.sh",
       enablePreCompact && "memento-precompact-distill.sh",
+      enableSessionStart && "memento-sessionstart-identity.sh",
     ].filter(Boolean);
 
     for (const name of scriptFiles) {
@@ -290,6 +300,20 @@ async function runInit() {
               type: "command",
               command: path.join(localScriptsDir, "memento-precompact-distill.sh"),
               timeout: 30000,
+            },
+          ],
+        },
+      ];
+    }
+
+    if (enableSessionStart) {
+      hooks.SessionStart = [
+        {
+          hooks: [
+            {
+              type: "command",
+              command: path.join(localScriptsDir, "memento-sessionstart-identity.sh"),
+              timeout: 10000,
             },
           ],
         },
