@@ -118,8 +118,16 @@ describe("resolveConfig", () => {
     assert.equal(cfg.apiKey, undefined);
     assert.equal(cfg.apiUrl, DEFAULTS.apiUrl);
     assert.equal(cfg.workspace, DEFAULTS.workspace);
+    assert.deepStrictEqual(cfg.agents, DEFAULTS.agents);
     assert.deepStrictEqual(cfg.features, DEFAULTS.features);
     assert.deepStrictEqual(cfg.hooks, DEFAULTS.hooks);
+  });
+
+  it("resolves agents from file config", () => {
+    const dir = mkNested("resolve-agents");
+    writeConfig(dir, { agents: ["claude-code", "gemini"] });
+    const cfg = resolveConfig(dir);
+    assert.deepStrictEqual(cfg.agents, ["claude-code", "gemini"]);
   });
 
   it("merges file config over defaults", () => {

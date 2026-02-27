@@ -10,7 +10,7 @@ AI agents have anterograde amnesia — every session starts blank. The Memento P
 npx memento-mcp init
 ```
 
-This creates `.memento.json`, configures Claude Code hooks, and sets up the MCP server — all in one command. Restart Claude Code to load the new config.
+This creates `.memento.json`, detects your agent (Claude Code, Codex, Gemini CLI, OpenCode), writes the correct MCP config, and sets up hooks (Claude Code only) — all in one command.
 
 ---
 
@@ -43,29 +43,55 @@ Save the `api_key` from the response — you'll need it next.
 
 ### Step 2: Configure your MCP client
 
-**Claude Code (project-level):** Create `.mcp.json` in your project root.
-
-**Claude Code (global):** Add to `~/.claude.json` under `"mcpServers"`.
-
-**Claude Desktop:** Add to your `claude_desktop_config.json`.
+**Claude Code** — `.mcp.json` in your project root (or `~/.claude.json` globally):
 
 ```json
 {
   "mcpServers": {
     "memento": {
-      "command": "node",
-      "args": ["/home/you/memento-protocol/src/index.js"],
-      "env": {
-        "MEMENTO_API_KEY": "mp_live_your_key_here",
-        "MEMENTO_API_URL": "https://memento-api.myrakrusemark.workers.dev",
-        "MEMENTO_WORKSPACE": "my-project"
-      }
+      "command": "npx",
+      "args": ["-y", "memento-mcp"]
     }
   }
 }
 ```
 
-> **Tip:** Replace the path with the actual absolute path to `src/index.js` in your clone. Run `echo "$(pwd)/src/index.js"` from inside the repo to get it.
+**OpenAI Codex** — `.codex/config.toml`:
+
+```toml
+[mcp_servers.memento]
+command = "npx"
+args = ["-y", "memento-mcp"]
+```
+
+**Gemini CLI** — `.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "memento": {
+      "command": "npx",
+      "args": ["-y", "memento-mcp"]
+    }
+  }
+}
+```
+
+**OpenCode** — `opencode.json`:
+
+```json
+{
+  "mcp": {
+    "memento": {
+      "type": "local",
+      "command": ["npx", "-y", "memento-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Set credentials via `.memento.json` (created by `npx memento-mcp init`) or environment variables `MEMENTO_API_KEY`, `MEMENTO_API_URL`, `MEMENTO_WORKSPACE`.
 
 ### Step 3: Restart your client
 

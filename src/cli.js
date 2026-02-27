@@ -96,6 +96,14 @@ function httpsPost(url, body) {
 // File writers
 // ---------------------------------------------------------------------------
 
+function readJsonFile(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 function writeJsonFile(filePath, data) {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -103,14 +111,7 @@ function writeJsonFile(filePath, data) {
 }
 
 function mergeJsonFile(filePath, data) {
-  let existing = {};
-  if (fs.existsSync(filePath)) {
-    try {
-      existing = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    } catch {
-      // Corrupt file — overwrite
-    }
-  }
+  const existing = readJsonFile(filePath) || {};
   const merged = deepMerge(existing, data);
   writeJsonFile(filePath, merged);
 }
@@ -126,6 +127,106 @@ function appendToGitignore(cwd, line) {
   }
   return true;
 }
+
+// ---------------------------------------------------------------------------
+// Agent registry — per-agent MCP config writers
+// ---------------------------------------------------------------------------
+
+const MCP_SERVER_ENTRY = {
+  command: "npx",
+  args: ["-y", "memento-mcp"],
+};
+
+function writeMcpJson(cwd) {
+  const filePath = path.join(cwd, ".mcp.json");
+  const existing = readJsonFile(filePath) || {};
+  deepMerge(existing, { mcpServers: { memento: MCP_SERVER_ENTRY } });
+  writeJsonFile(filePath, existing);
+  return ".mcp.json";
+}
+
+function writeCodexToml(cwd) {
+  const dir = path.join(cwd, ".codex");
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, "config.toml");
+
+  let content = "";
+  try {
+    content = fs.readFileSync(filePath, "utf8");
+  } catch {
+    /* file doesn't exist */
+  }
+
+  // Skip if memento section already exists
+  if (/\[mcp_servers\.memento\]/.test(content)) {
+    return ".codex/config.toml (already configured)";
+  }
+
+  const section = `\n[mcp_servers.memento]\ncommand = "npx"\nargs = ["-y", "memento-mcp"]\n`;
+  const separator = content && !content.endsWith("\n") ? "\n" : "";
+  fs.writeFileSync(filePath, content + separator + section);
+  return ".codex/config.toml";
+}
+
+function writeGeminiJson(cwd) {
+  const dir = path.join(cwd, ".gemini");
+  fs.mkdirSync(dir, { recursive: true });
+  const filePath = path.join(dir, "settings.json");
+  const existing = readJsonFile(filePath) || {};
+  deepMerge(existing, { mcpServers: { memento: MCP_SERVER_ENTRY } });
+  writeJsonFile(filePath, existing);
+  return ".gemini/settings.json";
+}
+
+function writeOpencodeJson(cwd) {
+  const filePath = path.join(cwd, "opencode.json");
+  const existing = readJsonFile(filePath) || {};
+  deepMerge(existing, {
+    mcp: {
+      memento: {
+        type: "local",
+        command: ["npx", "-y", "memento-mcp"],
+        enabled: true,
+      },
+    },
+  });
+  writeJsonFile(filePath, existing);
+  return "opencode.json";
+}
+
+const AGENTS = {
+  "claude-code": {
+    name: "Claude Code",
+    detect: (cwd) => fs.existsSync(path.join(cwd, ".claude")),
+    configWriter: writeMcpJson,
+    hasHooks: true,
+    nextSteps: "Restart Claude Code to activate.",
+  },
+  codex: {
+    name: "OpenAI Codex",
+    detect: (cwd) => fs.existsSync(path.join(cwd, ".codex")),
+    configWriter: writeCodexToml,
+    hasHooks: false,
+    nextSteps: "Run `codex` in this directory — memento tools load automatically.",
+  },
+  gemini: {
+    name: "Gemini CLI",
+    detect: (cwd) => fs.existsSync(path.join(cwd, ".gemini")),
+    configWriter: writeGeminiJson,
+    hasHooks: false,
+    nextSteps: "Run `gemini` in this directory — memento tools load automatically.",
+  },
+  opencode: {
+    name: "OpenCode",
+    detect: (cwd) => fs.existsSync(path.join(cwd, "opencode.json")),
+    configWriter: writeOpencodeJson,
+    hasHooks: false,
+    nextSteps: "Run `opencode` in this directory — memento tools load automatically.",
+  },
+};
+
+// Exported for testing
+export { AGENTS, writeMcpJson, writeCodexToml, writeGeminiJson, writeOpencodeJson };
 
 // ---------------------------------------------------------------------------
 // CLI
@@ -193,26 +294,76 @@ async function runInit() {
     false,
   );
 
-  // 4. Hooks
-  console.log("\nClaude Code hooks (automate recall + distillation):");
-  const enableUserPrompt = await askYesNo(
-    rl,
-    "  UserPromptSubmit — recall on every message?",
-    true
-  );
-  const enableStop = await askYesNo(rl, "  Stop — autonomous recall after responses?", true);
-  const enablePreCompact = await askYesNo(
-    rl,
-    "  PreCompact — distill memories before context compression?",
-    true
-  );
+  // 4. Agent detection + selection
+  const agentKeys = Object.keys(AGENTS);
+  const detected = agentKeys.filter((key) => AGENTS[key].detect(cwd));
+
+  console.log("\nDetected agents:");
+  const markers = {
+    "claude-code": ".claude/",
+    codex: ".codex/",
+    gemini: ".gemini/",
+    opencode: "opencode.json",
+  };
+  for (const key of agentKeys) {
+    const agent = AGENTS[key];
+    const isDetected = detected.includes(key);
+    const mark = isDetected ? "✓" : " ";
+    const hint = isDetected ? ` (${markers[key]} found)` : "";
+    console.log(`    ${mark} ${agent.name}${hint}`);
+  }
+
+  console.log("\n  Configure for which agents?");
+  agentKeys.forEach((key, i) => {
+    const mark = detected.includes(key) ? " ✓" : "";
+    console.log(`    ${i + 1}. ${AGENTS[key].name}${mark}`);
+  });
+
+  const defaultSelection =
+    detected.length > 0
+      ? detected.map((key) => agentKeys.indexOf(key) + 1).join(",")
+      : "1";
+  const selectionStr = await ask(rl, "\n  Enter numbers, comma-separated", defaultSelection);
+
+  const selectedIndices = selectionStr
+    .split(",")
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => n >= 1 && n <= agentKeys.length);
+  const selectedAgents = [...new Set(selectedIndices.map((i) => agentKeys[i - 1]))];
+
+  if (selectedAgents.length === 0) {
+    console.log("  No agents selected. Defaulting to Claude Code.");
+    selectedAgents.push("claude-code");
+  }
+
+  const hasClaude = selectedAgents.includes("claude-code");
+
+  // 5. Hooks — only if Claude Code selected
+  let enableUserPrompt = false;
+  let enableStop = false;
+  let enablePreCompact = false;
   let enableSessionStart = false;
-  if (enableIdentity) {
-    enableSessionStart = await askYesNo(
+
+  if (hasClaude) {
+    console.log("\nClaude Code hooks (automate recall + distillation):");
+    enableUserPrompt = await askYesNo(
       rl,
-      "  SessionStart — inject identity + active items at startup?",
-      true
+      "  UserPromptSubmit — recall on every message?",
+      true,
     );
+    enableStop = await askYesNo(rl, "  Stop — autonomous recall after responses?", true);
+    enablePreCompact = await askYesNo(
+      rl,
+      "  PreCompact — distill memories before context compression?",
+      true,
+    );
+    if (enableIdentity) {
+      enableSessionStart = await askYesNo(
+        rl,
+        "  SessionStart — inject identity + active items at startup?",
+        true,
+      );
+    }
   }
 
   rl.close();
@@ -221,6 +372,7 @@ async function runInit() {
   const config = {
     apiKey,
     workspace,
+    agents: selectedAgents,
     features: {
       images: enableImages,
       identity: enableIdentity,
@@ -235,15 +387,16 @@ async function runInit() {
 
   const created = [];
 
-  // 5. Write .memento.json
+  // 6. Write .memento.json
   const configPath = path.join(cwd, ".memento.json");
   writeJsonFile(configPath, config);
   created.push(".memento.json");
 
-  // 6. Copy hook scripts into .memento/scripts/ for stable paths
-  //    (pointing into the npx cache would break on cache clear or update)
-  const anyHookEnabled = enableUserPrompt || enableStop || enablePreCompact || enableSessionStart;
-  if (anyHookEnabled) {
+  // 7. Copy hook scripts + write Claude Code settings — gated on hasClaude
+  const anyHookEnabled =
+    enableUserPrompt || enableStop || enablePreCompact || enableSessionStart;
+
+  if (hasClaude && anyHookEnabled) {
     const pkgScriptsDir = path.resolve(__dirname, "..", "scripts");
     const localScriptsDir = path.join(cwd, ".memento", "scripts");
     if (!fs.existsSync(localScriptsDir))
@@ -264,7 +417,7 @@ async function runInit() {
     }
     created.push(".memento/scripts/");
 
-    // 7. Write .claude/settings.local.json (hooks)
+    // 8. Write .claude/settings.local.json (hooks)
     const hooks = {};
     if (enableUserPrompt) {
       hooks.UserPromptSubmit = [
@@ -305,14 +458,16 @@ async function runInit() {
         },
       ];
     }
-
     if (enableSessionStart) {
       hooks.SessionStart = [
         {
           hooks: [
             {
               type: "command",
-              command: path.join(localScriptsDir, "memento-sessionstart-identity.sh"),
+              command: path.join(
+                localScriptsDir,
+                "memento-sessionstart-identity.sh",
+              ),
               timeout: 10000,
             },
           ],
@@ -325,30 +480,29 @@ async function runInit() {
     created.push(".claude/settings.local.json");
   }
 
-  // 8. Write .mcp.json
-  const mcpPath = path.join(cwd, ".mcp.json");
-  mergeJsonFile(mcpPath, {
-    mcpServers: {
-      memento: {
-        command: "npx",
-        args: ["-y", "memento-mcp"],
-      },
-    },
-  });
-  created.push(".mcp.json");
+  // 9. Per-agent config files
+  for (const agentKey of selectedAgents) {
+    const agent = AGENTS[agentKey];
+    const result = agent.configWriter(cwd);
+    created.push(result);
+  }
 
-  // 9. Add .memento.json and .memento/scripts/ to .gitignore
+  // 10. Add .memento.json and .memento/scripts/ to .gitignore
   let gitignoreUpdated = false;
   if (appendToGitignore(cwd, ".memento.json")) gitignoreUpdated = true;
   if (appendToGitignore(cwd, ".memento/scripts/")) gitignoreUpdated = true;
   if (gitignoreUpdated) created.push(".gitignore (updated)");
 
-  // 10. Summary
+  // 11. Summary
   const labels = {
     ".memento.json": "workspace config + credentials",
     ".memento/scripts/": "hook scripts (recall + distillation)",
     ".claude/settings.local.json": "hooks registered with Claude Code",
-    ".mcp.json": "MCP server registered",
+    ".mcp.json": "MCP server registered (Claude Code)",
+    ".codex/config.toml": "MCP server registered (Codex)",
+    ".codex/config.toml (already configured)": "MCP server (Codex, skipped)",
+    ".gemini/settings.json": "MCP server registered (Gemini CLI)",
+    "opencode.json": "MCP server registered (OpenCode)",
     ".gitignore (updated)": "credentials excluded from git",
   };
   const colWidth = Math.max(...created.map((f) => f.length)) + 2;
@@ -358,14 +512,25 @@ async function runInit() {
     const label = labels[f] || "";
     console.log(`    ${f.padEnd(colWidth)}${label}`);
   }
-  console.log("\n  Restart Claude Code to activate.");
+
+  // Per-agent next steps
+  console.log("\n  Next steps:");
+  for (const agentKey of selectedAgents) {
+    const agent = AGENTS[agentKey];
+    console.log(`    · ${agent.name}: ${agent.nextSteps}`);
+  }
   console.log("  Your agent will wake up remembering.\n");
 
-  // 11. CLAUDE.md boilerplate
+  // 12. CLAUDE.md / AGENTS.md boilerplate
+  const hasNonClaude = selectedAgents.some((k) => k !== "claude-code");
+  const docTarget = hasNonClaude
+    ? "your CLAUDE.md, AGENTS.md, or equivalent"
+    : "your CLAUDE.md";
+
   console.log("─".repeat(60));
   console.log(`
-  One more step: paste the following into your CLAUDE.md,
-  or hand it to Claude and ask it to add it. This teaches
+  One more step: paste the following into ${docTarget},
+  or hand it to your agent and ask it to add it. This teaches
   your agent the memory discipline Memento expects.
 
   ── paste below this line ──────────────────────────────
@@ -392,32 +557,39 @@ before compaction. Trust the hooks. Focus on writing good memories.
 }
 
 // ---------------------------------------------------------------------------
-// Entrypoint
+// Entrypoint — only run when this module is the entry point (not imported)
 // ---------------------------------------------------------------------------
 
-const args = process.argv.slice(2);
+const isMain =
+  process.argv[1] &&
+  (process.argv[1].endsWith("/cli.js") || process.argv[1].endsWith("memento-mcp"));
 
-if (args[0] === "init") {
-  runInit().catch((err) => {
-    console.error(err);
-    process.exit(1);
-  });
-} else if (args.length === 0) {
-  // No args — start the MCP server (this is what .mcp.json invokes)
-  // Must call main() explicitly because the isMainModule guard in index.js
-  // checks process.argv[1] which still points to cli.js, not index.js.
-  const { main } = await import("./index.js");
-  await main();
-} else {
-  console.log(`
+if (isMain) {
+  const args = process.argv.slice(2);
+
+  if (args[0] === "init") {
+    runInit().catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+  } else if (args.length === 0) {
+    // No args — start the MCP server (this is what .mcp.json invokes)
+    // Must call main() explicitly because the isMainModule guard in index.js
+    // checks process.argv[1] which still points to cli.js, not index.js.
+    const { main } = await import("./index.js");
+    await main();
+  } else {
+    console.log(`
   Memento Protocol CLI
 
   Usage:
     npx memento-mcp init    Set up Memento in the current project
     npx memento-mcp         Start the MCP server (used by .mcp.json)
 
-  This creates .memento.json, configures Claude Code hooks,
-  and sets up the MCP server — all in one command.
+  This creates .memento.json, configures your agent's MCP client,
+  and sets up hooks (Claude Code) — all in one command.
+  Supports Claude Code, Codex, Gemini CLI, and OpenCode.
 `);
-  process.exit(1);
+    process.exit(1);
+  }
 }

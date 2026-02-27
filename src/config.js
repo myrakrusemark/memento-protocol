@@ -14,6 +14,7 @@ import path from "node:path";
 export const DEFAULTS = {
   apiUrl: "https://memento-api.myrakrusemark.workers.dev",
   workspace: "default",
+  agents: [],
   features: { images: false, identity: false },
   hooks: {
     "userprompt-recall": { enabled: true, limit: 5, maxLength: 200 },
@@ -69,5 +70,7 @@ export function resolveConfig(startDir = process.cwd()) {
     hooks[key] = { ...defaults, ...(fileConfig.hooks?.[key] || {}) };
   }
 
-  return { apiKey, apiUrl, workspace, features, hooks };
+  const agents = fileConfig.agents || DEFAULTS.agents;
+
+  return { apiKey, apiUrl, workspace, agents, features, hooks };
 }
