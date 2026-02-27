@@ -1,4 +1,4 @@
-/* Memento Analytics — Frontend Logic */
+/* Hifathom Analytics — Frontend Logic */
 /* global Chart */
 
 const $ = (sel) => document.querySelector(sel);
@@ -34,6 +34,7 @@ async function logout() {
 function showLogin() {
   $("#login-view").hidden = false;
   $("#dashboard-view").hidden = true;
+  $("#top-tabs").hidden = true;
   clearInterval(refreshTimer);
 }
 
@@ -41,20 +42,37 @@ function showDashboard() {
   $("#login-view").hidden = true;
   $("#dashboard-view").hidden = false;
   $("#dashboard-view").style.display = "flex";
+  $("#top-tabs").hidden = false;
 }
 
-// ─── Data Loading ────────────────────────────────────────────────────────────
+// ─── Top-Level Tabs ──────────────────────────────────────────────────────────
 
-// ─── Tabs ─────────────────────────────────────────────────────────────────────
-
-document.querySelectorAll(".tab-btn").forEach((btn) => {
+document.querySelectorAll(".top-tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
-    document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
-    document.querySelectorAll(".tab-pane").forEach((p) => { p.hidden = true; });
+    document.querySelectorAll(".top-tab-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".top-pane").forEach((p) => { p.hidden = true; });
     btn.classList.add("active");
-    $(`#tab-${btn.dataset.tab}`).hidden = false;
+    const pane = $(`#pane-${btn.dataset.topTab}`);
+    pane.hidden = false;
+
+    // Chart.js can't size canvases in hidden containers — resize on reveal
+    if (btn.dataset.topTab === "memento") {
+      Object.values(charts).forEach((c) => c.resize());
+    }
   });
 });
+
+// ─── Collapsible Sections ────────────────────────────────────────────────────
+
+document.querySelectorAll(".collapsible").forEach((header) => {
+  header.addEventListener("click", () => {
+    header.classList.toggle("collapsed");
+    const target = document.getElementById(header.dataset.target);
+    target.hidden = !target.hidden;
+  });
+});
+
+// ─── Data Loading ────────────────────────────────────────────────────────────
 
 async function loadInboxData() {
   try {
@@ -68,7 +86,7 @@ async function loadInboxData() {
 
 function renderContactTab(contacts) {
   const count = contacts.length;
-  $("#tab-contact-count").textContent = count || "";
+  $("#contact-count-header").textContent = count || "";
   const list = $("#contact-list");
   if (!count) {
     list.innerHTML = `<p class="inbox-empty">No messages yet.</p>`;
@@ -87,7 +105,7 @@ function renderContactTab(contacts) {
 
 function renderEmailTab(subscribers) {
   const count = subscribers.length;
-  $("#tab-email-count").textContent = count || "";
+  $("#email-count-header").textContent = count || "";
   const list = $("#email-list");
   if (!count) {
     list.innerHTML = `<p class="inbox-empty">No subscribers yet.</p>`;
