@@ -403,6 +403,7 @@ async function runInit() {
       fs.mkdirSync(localScriptsDir, { recursive: true });
 
     const scriptFiles = [
+      "hook-toast.sh",
       enableUserPrompt && "memento-userprompt-recall.sh",
       enableStop && "memento-stop-recall.sh",
       enablePreCompact && "memento-precompact-distill.sh",

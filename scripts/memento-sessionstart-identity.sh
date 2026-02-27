@@ -10,6 +10,7 @@
 set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TOAST="$SCRIPT_DIR/hook-toast.sh"
 
 # --- Config from .memento.json (if present) ---
 CONFIG_JSON=$(python3 -c "
@@ -79,6 +80,9 @@ IDENTITY_TMP=$(mktemp)
 ACTIVE_TMP=$(mktemp)
 SKIP_TMP=$(mktemp)
 trap 'rm -f "$IDENTITY_TMP" "$ACTIVE_TMP" "$SKIP_TMP"' EXIT
+
+# Toast: loading identity
+"$TOAST" memento "⏳ Loading identity..." &>/dev/null
 
 # Fetch all three endpoints in parallel
 curl -s --max-time 3 -H "$AUTH_HEADER" -H "$WS_HEADER" \
@@ -158,5 +162,8 @@ print(json.dumps({
     }
 }))
 " "$IDENTITY_TMP" "$ACTIVE_TMP" "$SKIP_TMP" 2>/dev/null
+
+# Toast: done
+"$TOAST" memento "✓ Identity loaded" &>/dev/null
 
 exit 0

@@ -6,6 +6,7 @@
 set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TOAST="$SCRIPT_DIR/hook-toast.sh"
 
 # --- Config from .memento.json (if present) ---
 CONFIG_JSON=$(python3 -c "
@@ -74,6 +75,9 @@ fi
 # Truncate to first 500 chars for the query
 QUERY="${ASSISTANT_MSG:0:500}"
 
+# Toast: start retrieving
+"$TOAST" memento "⏳ Autonomous recall..." &>/dev/null
+
 # Call Memento /v1/context
 RESULT=$(curl -s --max-time 3 \
     -X POST \
@@ -122,8 +126,12 @@ if [ -n "$REMAINING" ]; then
 fi
 
 if [ -z "$SAAS_COUNT" ] || [ "$SAAS_COUNT" = "0" ]; then
+    "$TOAST" memento "✓ No memories matched" &>/dev/null
     exit 0
 fi
+
+# Toast: result
+"$TOAST" memento "✓ ${SAAS_COUNT} memories recalled" &>/dev/null
 
 # Block the Stop so Claude continues — the reason becomes Claude's next instruction.
 REASON="Autonomous Recall: ${SAAS_COUNT} memories surfaced from your last response.

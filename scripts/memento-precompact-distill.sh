@@ -8,17 +8,27 @@
 set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TOAST="$SCRIPT_DIR/hook-toast.sh"
+
+# Toast: start multi-stage
+"$TOAST" memento --status distill &>/dev/null
+"$TOAST" --update distill "⏳ Getting context..." &>/dev/null
+
 INPUT=$(cat)
 
 TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path' | sed "s|~|$HOME|")
 
 # Only distill if transcript exists and has content
 if [ ! -f "$TRANSCRIPT_PATH" ]; then
+    "$TOAST" --update distill "✗ No transcript found" &>/dev/null
+    ("$TOAST" --close distill &>/dev/null &)
     exit 0
 fi
 
 LINE_COUNT=$(wc -l < "$TRANSCRIPT_PATH")
 if [ "$LINE_COUNT" -lt 2 ]; then
+    "$TOAST" --update distill "✓ Skipped (tiny conversation)" &>/dev/null
+    ("$TOAST" --close distill &>/dev/null &)
     exit 0
 fi
 
@@ -79,8 +89,13 @@ else
 fi
 
 if [ ${#TRANSCRIPT_TEXT} -lt 200 ]; then
+    "$TOAST" --update distill "✓ Skipped (too short)" &>/dev/null
+    ("$TOAST" --close distill &>/dev/null &)
     exit 0  # Too short to distill anything useful
 fi
+
+# Toast: extracting
+"$TOAST" --update distill "⏳ Extracting memories..." &>/dev/null
 
 DISTILL_MODEL="${DISTILL_MODEL:-llama}"
 
@@ -166,9 +181,15 @@ print(json.dumps({'memories': parsed, 'source': 'distill:claude-code'}))
             -d "$INGEST_PAYLOAD" \
             "$MEMENTO_API/v1/memories/ingest" > /dev/null 2>&1
 
+        "$TOAST" --update distill "✓ Stored ${MEMORY_COUNT} memories" &>/dev/null
+        ("$TOAST" --close distill &>/dev/null &)
+
         python3 -c "import json,sys; print(json.dumps({'systemMessage': sys.argv[1]}))" \
             "Memento Distill (claude-code): ${MEMORY_COUNT} memories — ${TYPE_BREAKDOWN}"
     else
+        "$TOAST" --update distill "✓ No memories extracted" &>/dev/null
+        ("$TOAST" --close distill &>/dev/null &)
+
         python3 -c "import json,sys; print(json.dumps({'systemMessage': sys.argv[1]}))" \
             "Memento Distill (claude-code): no memories extracted"
     fi
@@ -206,9 +227,15 @@ MEMORY_COUNT=$(echo "$DISTILL_SUMMARY" | cut -d'|' -f1)
 TYPE_BREAKDOWN=$(echo "$DISTILL_SUMMARY" | cut -d'|' -f2)
 
 if [ "${MEMORY_COUNT:-0}" -gt 0 ] 2>/dev/null; then
+    "$TOAST" --update distill "✓ Stored ${MEMORY_COUNT} memories" &>/dev/null
+    ("$TOAST" --close distill &>/dev/null &)
+
     python3 -c "import json,sys; print(json.dumps({'systemMessage': sys.argv[1]}))" \
         "Memento Distill: ${MEMORY_COUNT} memories — ${TYPE_BREAKDOWN}"
 else
+    "$TOAST" --update distill "✓ No memories extracted" &>/dev/null
+    ("$TOAST" --close distill &>/dev/null &)
+
     python3 -c "import json,sys; print(json.dumps({'systemMessage': sys.argv[1]}))" \
         "Memento Distill: no memories extracted"
 fi

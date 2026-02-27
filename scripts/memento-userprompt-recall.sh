@@ -7,6 +7,7 @@
 set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+TOAST="$SCRIPT_DIR/hook-toast.sh"
 
 # --- Config from .memento.json (if present) ---
 CONFIG_JSON=$(python3 -c "
@@ -66,6 +67,9 @@ fi
 
 QUERY="${USER_MESSAGE:0:500}"
 
+# Toast: start retrieving
+"$TOAST" memento "⏳ Retrieving memories..." &>/dev/null
+
 # Call Memento SaaS /v1/context
 SAAS_OUTPUT=$(curl -s --max-time 3 \
     -X POST \
@@ -118,8 +122,12 @@ if [ -n "$REMAINING" ]; then
 fi
 
 if [ -z "$SAAS_COUNT" ] || [ "$SAAS_COUNT" = "0" ]; then
+    "$TOAST" memento "✓ No memories matched" &>/dev/null
     exit 0
 fi
+
+# Toast: result
+"$TOAST" memento "✓ ${SAAS_COUNT} memories recalled" &>/dev/null
 
 DETAIL_TEXT="Memento Recall: ${SAAS_COUNT} memories"
 DETAIL_TEXT="$DETAIL_TEXT"$'\n'"$SAAS_DETAIL"
