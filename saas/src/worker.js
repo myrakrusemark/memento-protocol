@@ -22,6 +22,10 @@ export default {
     if (env.TURSO_API_TOKEN) process.env.TURSO_API_TOKEN = env.TURSO_API_TOKEN;
     if (env.TURSO_ORG) process.env.TURSO_ORG = env.TURSO_ORG;
     if (env.TURSO_GROUP) process.env.TURSO_GROUP = env.TURSO_GROUP;
+    if (env.STRIPE_SECRET_KEY) process.env.STRIPE_SECRET_KEY = env.STRIPE_SECRET_KEY;
+    if (env.STRIPE_SECRET_KEY_TEST) process.env.STRIPE_SECRET_KEY_TEST = env.STRIPE_SECRET_KEY_TEST;
+    if (env.STRIPE_WEBHOOK_SECRET) process.env.STRIPE_WEBHOOK_SECRET = env.STRIPE_WEBHOOK_SECRET;
+    if (env.MEMENTO_ADMIN_USER_ID) process.env.MEMENTO_ADMIN_USER_ID = env.MEMENTO_ADMIN_USER_ID;
 
     // Initialize control plane schema on first request
     if (!initialized) {

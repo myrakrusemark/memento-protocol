@@ -7,6 +7,7 @@
 
 export const PLANS = {
   free: { memories: 100, items: 20, workspaces: 1 },
+  pro: { memories: 1000, items: 100, workspaces: 5 },
   full: { memories: Infinity, items: Infinity, workspaces: Infinity },
 };
 

@@ -29,11 +29,21 @@ admin.post("/backfill-embeddings", async (c) => {
   });
 });
 
-// PUT /v1/admin/plan — Update the authenticated user's plan (self-service only)
+// PUT /v1/admin/plan — Admin-only plan changes (normal users upgrade via Stripe)
 admin.put("/plan", async (c) => {
   const userId = c.get("userId");
+  const adminUserId = process.env.MEMENTO_ADMIN_USER_ID;
+
+  if (!adminUserId || userId !== adminUserId) {
+    return c.json(
+      { error: "Plan changes require a Stripe subscription. Use the checkout link to upgrade." },
+      403
+    );
+  }
+
   const body = await c.req.json();
   const plan = body.plan;
+  const targetUserId = body.user_id || userId;
 
   if (!plan || !PLANS[plan]) {
     return c.json(
@@ -45,11 +55,11 @@ admin.put("/plan", async (c) => {
   const controlDb = getControlDb();
   await controlDb.execute({
     sql: "UPDATE users SET plan = ?, updated_at = datetime('now') WHERE id = ?",
-    args: [plan, userId],
+    args: [plan, targetUserId],
   });
 
   return c.json({
-    content: [{ type: "text", text: `Plan updated to "${plan}" for user ${userId}.` }],
+    content: [{ type: "text", text: `Plan updated to "${plan}" for user ${targetUserId}.` }],
   });
 });
 

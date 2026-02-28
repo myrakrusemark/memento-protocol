@@ -221,6 +221,8 @@ export async function initSchema(db, schemaType = "all") {
 async function runControlMigrations(db) {
   const migrations = [
     `ALTER TABLE workspaces ADD COLUMN encrypted_key TEXT`,
+    `ALTER TABLE users ADD COLUMN stripe_customer_id TEXT`,
+    `ALTER TABLE users ADD COLUMN stripe_subscription_id TEXT`,
   ];
   for (const sql of migrations) {
     try {

@@ -28,6 +28,7 @@ import distill from "./routes/distill.js";
 import images from "./routes/images.js";
 import settings from "./routes/settings.js";
 import { registerAuthRoutes } from "./routes/auth.js";
+import stripeWebhook from "./routes/stripe-webhook.js";
 
 export function createApp() {
   const app = new Hono();
@@ -60,6 +61,9 @@ export function createApp() {
 
   // Auth routes (unauthenticated — signup, key management)
   registerAuthRoutes(app);
+
+  // Stripe webhook (unauthenticated — uses Stripe signature verification)
+  app.route("/webhooks/stripe", stripeWebhook);
 
   // All /v1/* routes require auth + workspace resolution
   const v1 = new Hono();
