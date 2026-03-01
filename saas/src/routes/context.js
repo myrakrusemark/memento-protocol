@@ -441,7 +441,11 @@ context.post("/", async (c) => {
 
     if (autoExtractEnabled) {
       const role = body.extract_role === "assistant" ? "assistant" : "user";
-      const charCount = message.length;
+      // Use extract_content if provided (full clean message), fall back to message (recall query)
+      const bufferContent = (body.extract_content && typeof body.extract_content === "string")
+        ? body.extract_content
+        : message;
+      const charCount = bufferContent.length;
 
       // Read configurable threshold (default to BUFFER_CHAR_THRESHOLD)
       let threshold = BUFFER_CHAR_THRESHOLD;
@@ -474,7 +478,7 @@ context.post("/", async (c) => {
       }
 
       // Append message to buffer (encrypt if workspace has key)
-      const bufferedContent = encKey ? await encryptField(message, encKey) : message;
+      const bufferedContent = encKey ? await encryptField(bufferContent, encKey) : bufferContent;
       await db.execute({
         sql: "INSERT INTO conversation_buffer (role, content, char_count, created_at) VALUES (?, ?, ?, ?)",
         args: [role, bufferedContent, charCount, nowISO],
