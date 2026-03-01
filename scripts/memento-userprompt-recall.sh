@@ -70,13 +70,13 @@ QUERY="${USER_MESSAGE:0:500}"
 # Toast: start retrieving
 "$TOAST" memento "⏳ Retrieving memories..." &>/dev/null
 
-# Call Memento SaaS /v1/context
-SAAS_OUTPUT=$(curl -s --max-time 3 \
+# Call Memento SaaS /v1/context (with auto_extract for passive memory formation)
+SAAS_OUTPUT=$(curl -s --max-time 8 \
     -X POST \
     -H "Authorization: Bearer $MEMENTO_KEY" \
     -H "X-Memento-Workspace: $MEMENTO_WS" \
     -H "Content-Type: application/json" \
-    -d "{\"message\": $(echo "$QUERY" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'), \"include\": [\"memories\", \"skip_list\"]}" \
+    -d "{\"message\": $(echo "$QUERY" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'), \"include\": [\"memories\", \"skip_list\"], \"auto_extract\": true, \"extract_role\": \"user\", \"extract_content\": $(echo "$USER_MESSAGE" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}" \
     "$MEMENTO_API/v1/context" 2>/dev/null \
 | python3 -c "
 import json, sys
@@ -105,16 +105,28 @@ try:
         for s in skip_matches:
             lines.append(f'  ⚠ SKIP: {s[\"item\"]} — {s[\"reason\"]} (expires: {s[\"expires\"]})')
 
-    # Output count and detail as tab-separated on first line, rest follows
+    # Auto-extracted memories
+    extracted = data.get('extracted', [])
+    if extracted:
+        lines.append('')
+        lines.append('MEMORIES STORED:')
+        for e in extracted:
+            etags = [t for t in e.get('tags', []) if t != 'source:auto-extract']
+            etag_str = f' [{\", \".join(etags)}]' if etags else ''
+            lines.append(f'  {e[\"id\"]} ({e.get(\"type\", \"observation\")}){etag_str} — {e[\"content\"]}')
+
+    # Output: recall_count \t extracted_count \t detail
+    extracted_count = len(extracted)
     detail = '\n'.join(lines)
-    print(f'{count}\t{detail}')
+    print(f'{count}\t{extracted_count}\t{detail}')
 except Exception:
-    print('0\t')
+    print('0\t0\t')
 " 2>/dev/null)
 
-# Parse count and detail
+# Parse count, extracted count, and detail
 SAAS_COUNT=$(echo "$SAAS_OUTPUT" | head -1 | cut -f1)
-SAAS_DETAIL=$(echo "$SAAS_OUTPUT" | head -1 | cut -f2-)
+EXTRACTED_COUNT=$(echo "$SAAS_OUTPUT" | head -1 | cut -f2)
+SAAS_DETAIL=$(echo "$SAAS_OUTPUT" | head -1 | cut -f3-)
 # Append any remaining lines (skip warnings etc.)
 REMAINING=$(echo "$SAAS_OUTPUT" | tail -n +2)
 if [ -n "$REMAINING" ]; then
@@ -122,18 +134,30 @@ if [ -n "$REMAINING" ]; then
 fi
 
 if [ -z "$SAAS_COUNT" ] || [ "$SAAS_COUNT" = "0" ]; then
-    "$TOAST" memento "✓ No memories matched" &>/dev/null
-    exit 0
+    if [ -n "$EXTRACTED_COUNT" ] && [ "$EXTRACTED_COUNT" != "0" ]; then
+        "$TOAST" memento "✓ ${EXTRACTED_COUNT} memories stored" &>/dev/null
+    else
+        "$TOAST" memento "✓ No memories matched" &>/dev/null
+        exit 0
+    fi
+else
+    if [ -n "$EXTRACTED_COUNT" ] && [ "$EXTRACTED_COUNT" != "0" ]; then
+        "$TOAST" memento "✓ ${SAAS_COUNT} recalled, ${EXTRACTED_COUNT} stored" &>/dev/null
+    else
+        "$TOAST" memento "✓ ${SAAS_COUNT} memories recalled" &>/dev/null
+    fi
 fi
 
-# Toast: result
-"$TOAST" memento "✓ ${SAAS_COUNT} memories recalled" &>/dev/null
+# Build summary line
+SUMMARY="Memento Recall: ${SAAS_COUNT} memories"
+if [ -n "$EXTRACTED_COUNT" ] && [ "$EXTRACTED_COUNT" != "0" ]; then
+    SUMMARY="${SUMMARY}, ${EXTRACTED_COUNT} memories stored"
+fi
 
-DETAIL_TEXT="Memento Recall: ${SAAS_COUNT} memories"
+DETAIL_TEXT="$SUMMARY"
 DETAIL_TEXT="$DETAIL_TEXT"$'\n'"$SAAS_DETAIL"
 DETAIL_TEXT="$DETAIL_TEXT"$'\n'$'\n'"REMINDER: If Memento MCP tools are not loaded, run: ToolSearch query=\"+memento\" max_results=20"
 
-SUMMARY="Memento Recall: ${SAAS_COUNT} memories"
 python3 -c "
 import json, sys
 summary = sys.argv[1]
