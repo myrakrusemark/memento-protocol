@@ -118,6 +118,7 @@ export async function extractMemories({
 
   for (const entry of capped) {
     if (!entry.content || typeof entry.content !== "string") continue;
+    entry.content = entry.content.trim();
 
     const id = randomUUID().slice(0, 8);
     const type = VALID_TYPES.has(entry.type) ? entry.type : "observation";

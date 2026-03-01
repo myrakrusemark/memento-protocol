@@ -443,6 +443,21 @@ context.post("/", async (c) => {
       const role = body.extract_role === "assistant" ? "assistant" : "user";
       const charCount = message.length;
 
+      // Read configurable threshold (default to BUFFER_CHAR_THRESHOLD)
+      let threshold = BUFFER_CHAR_THRESHOLD;
+      try {
+        const threshResult = await db.execute({
+          sql: "SELECT value FROM workspace_settings WHERE key = 'auto_extract_threshold'",
+          args: [],
+        });
+        if (threshResult.rows[0]?.value) {
+          const parsed = parseInt(threshResult.rows[0].value, 10);
+          if (!isNaN(parsed) && parsed > 0) threshold = parsed;
+        }
+      } catch {
+        // Use default
+      }
+
       // Ensure conversation_buffer table exists
       try {
         await db.execute(
@@ -471,7 +486,7 @@ context.post("/", async (c) => {
       );
       const totalChars = sizeResult.rows[0]?.total_chars || 0;
 
-      if (totalChars >= BUFFER_CHAR_THRESHOLD) {
+      if (totalChars >= threshold) {
         // Read all buffered messages, format as transcript
         const bufferRows = await db.execute(
           "SELECT role, content, created_at FROM conversation_buffer ORDER BY created_at ASC, id ASC"
@@ -503,14 +518,14 @@ context.post("/", async (c) => {
         await db.execute("DELETE FROM conversation_buffer");
 
         result.extracted = stored;
-        result.buffer_status = { chars: 0, threshold: BUFFER_CHAR_THRESHOLD, just_extracted: true };
+        result.buffer_status = { chars: 0, threshold, just_extracted: true };
 
         if (error) {
           result.extraction_error = error;
         }
       } else {
         result.extracted = [];
-        result.buffer_status = { chars: totalChars, threshold: BUFFER_CHAR_THRESHOLD };
+        result.buffer_status = { chars: totalChars, threshold };
       }
     } else {
       result.extracted = [];
