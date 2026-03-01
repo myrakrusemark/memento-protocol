@@ -8,6 +8,8 @@
 export const PLANS = {
   free: { memories: 100, items: 20, workspaces: 1 },
   pro: { memories: 1000, items: 100, workspaces: 5 },
+  // Internal admin-only plan. Never exposed in billing UI or checkout.
+  // Assigned manually via PUT /v1/admin/plan (requires MEMENTO_ADMIN_USER_ID).
   full: { memories: Infinity, items: Infinity, workspaces: Infinity },
 };
 

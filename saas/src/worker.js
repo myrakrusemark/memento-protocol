@@ -26,6 +26,8 @@ export default {
     if (env.STRIPE_SECRET_KEY_TEST) process.env.STRIPE_SECRET_KEY_TEST = env.STRIPE_SECRET_KEY_TEST;
     if (env.STRIPE_WEBHOOK_SECRET) process.env.STRIPE_WEBHOOK_SECRET = env.STRIPE_WEBHOOK_SECRET;
     if (env.MEMENTO_ADMIN_USER_ID) process.env.MEMENTO_ADMIN_USER_ID = env.MEMENTO_ADMIN_USER_ID;
+    if (env.STRIPE_PAYMENT_LINK_URL) process.env.STRIPE_PAYMENT_LINK_URL = env.STRIPE_PAYMENT_LINK_URL;
+    if (env.STRIPE_PRO_PRICE_ID) process.env.STRIPE_PRO_PRICE_ID = env.STRIPE_PRO_PRICE_ID;
 
     // Initialize control plane schema on first request
     if (!initialized) {

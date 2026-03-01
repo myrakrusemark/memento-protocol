@@ -55,10 +55,10 @@ export async function verifyWebhookSignature(rawBody, sigHeader, secret) {
     throw new Error("Invalid Stripe-Signature header format");
   }
 
-  // Replay protection — reject if timestamp is too old
+  // Replay protection — reject if timestamp is too old or too far in the future
   const timestampAge = Math.floor(Date.now() / 1000) - parseInt(timestamp, 10);
-  if (isNaN(timestampAge) || timestampAge > WEBHOOK_TOLERANCE_SECONDS) {
-    throw new Error("Webhook timestamp too old (possible replay)");
+  if (isNaN(timestampAge) || Math.abs(timestampAge) > WEBHOOK_TOLERANCE_SECONDS) {
+    throw new Error("Webhook timestamp outside tolerance (possible replay)");
   }
 
   // Compute expected signature

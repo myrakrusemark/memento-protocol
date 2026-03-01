@@ -27,7 +27,8 @@ import admin from "./routes/admin.js";
 import distill from "./routes/distill.js";
 import images from "./routes/images.js";
 import settings from "./routes/settings.js";
-import { registerAuthRoutes } from "./routes/auth.js";
+import { registerAuthRoutes, registerAuthenticatedRoutes } from "./routes/auth.js";
+import { registerBillingPublicRoutes, billingAuthenticated } from "./routes/billing.js";
 import stripeWebhook from "./routes/stripe-webhook.js";
 
 export function createApp() {
@@ -62,6 +63,9 @@ export function createApp() {
   // Auth routes (unauthenticated — signup, key management)
   registerAuthRoutes(app);
 
+  // Billing pre-checkout (unauthenticated — accepts API key in body)
+  registerBillingPublicRoutes(app);
+
   // Stripe webhook (unauthenticated — uses Stripe signature verification)
   app.route("/webhooks/stripe", stripeWebhook);
 
@@ -84,6 +88,8 @@ export function createApp() {
   v1.route("/distill", distill);
   v1.route("/images", images);
   v1.route("/settings", settings);
+  v1.route("/billing", billingAuthenticated);
+  registerAuthenticatedRoutes(v1);
 
   app.route("/v1", v1);
 

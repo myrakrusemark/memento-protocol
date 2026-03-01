@@ -101,3 +101,12 @@ CREATE TABLE IF NOT EXISTS identity_snapshots (
   source_count INTEGER DEFAULT 0,
   created_at TEXT DEFAULT (datetime('now'))
 );
+
+-- Conversation buffer (for passive memory extraction)
+CREATE TABLE IF NOT EXISTS conversation_buffer (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  char_count INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

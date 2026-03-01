@@ -113,6 +113,21 @@ CREATE TABLE IF NOT EXISTS workspaces (
   updated_at TEXT DEFAULT (datetime('now')),
   UNIQUE(user_id, name)
 );
+
+CREATE TABLE IF NOT EXISTS processed_webhook_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  processed_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,
+  user_id TEXT,
+  details TEXT,
+  ip TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
 `;
 
 const WORKSPACE_SCHEMA = `
@@ -188,6 +203,14 @@ CREATE TABLE IF NOT EXISTS working_memory_items (
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS conversation_buffer (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  char_count INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `;
 
 /**
@@ -232,6 +255,15 @@ async function runControlMigrations(db) {
       throw err;
     }
   }
+
+  // Idempotent table creation — safe to re-run
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS processed_webhook_events (
+      event_id TEXT PRIMARY KEY,
+      event_type TEXT NOT NULL,
+      processed_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
 }
 
 async function runMigrations(db) {

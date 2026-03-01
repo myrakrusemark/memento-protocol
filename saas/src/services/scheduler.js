@@ -56,5 +56,20 @@ export async function runScheduledTasks(cron, env) {
     }
   }
 
+  // Control plane cleanup — runs on daily cron only
+  if (cron === "0 3 * * *") {
+    try {
+      await controlDb.execute(
+        "DELETE FROM audit_log WHERE created_at < datetime('now', '-90 days')"
+      );
+      await controlDb.execute(
+        "DELETE FROM processed_webhook_events WHERE processed_at < datetime('now', '-90 days')"
+      );
+      results.push({ task: "control_plane_cleanup", status: "ok" });
+    } catch (err) {
+      results.push({ task: "control_plane_cleanup", error: err.message });
+    }
+  }
+
   return results;
 }

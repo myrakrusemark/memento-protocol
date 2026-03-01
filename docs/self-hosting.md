@@ -82,5 +82,5 @@ Workers AI and Vectorize are included in the Cloudflare Workers free tier.
 
 - You manage your own Turso databases and Cloudflare account
 - You handle upgrades by pulling from the repo and redeploying
-- No usage dashboard at hifathom.com (you'd use Cloudflare's dashboard)
+- No usage dashboard at hifathom.com/memento/dashboard (you'd use Cloudflare's dashboard)
 - Signup endpoint creates keys in your control plane database

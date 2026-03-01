@@ -8,10 +8,39 @@
 import { Hono } from "hono";
 import { scoreAndRankMemories, hybridRank } from "../services/scoring.js";
 import { semanticSearch } from "../services/embeddings.js";
-import { decryptField, getWorkspaceKey } from "../services/crypto.js";
+import { decryptField, encryptField, getWorkspaceKey } from "../services/crypto.js";
 import { getControlDb, getWorkspaceDb } from "../db/connection.js";
+import { extractMemories } from "../services/extraction.js";
 
 const context = new Hono();
+
+const BUFFER_CHAR_THRESHOLD = 20_000;
+
+const SEED_EXTRACTION_PROMPT = `You extract relational and experiential memories from conversations — the human texture that makes relationships real.
+
+Extract ONLY:
+- Personal plans, hopes, intentions with specific details
+- Emotional shifts — tone changes, excitement, hesitation, humor
+- Preferences, tastes, dislikes
+- Surprises or things that landed unexpectedly
+- Names + relationship context (who someone is to who)
+- Birthdays, anniversaries, recurring events
+- Sensory details — what something looked/sounded/felt like
+
+Do NOT extract:
+- Technical facts, code decisions, system configurations
+- Operational instructions or task progress
+- Anything in the existing memories below
+- Generic statements ("we talked about coffee")
+- Status updates or work logs
+
+Each memory: vivid, specific, one sentence, with proper nouns and context.
+Type: "fact", "preference", or "observation" only.
+Max 3 memories. Return [] if nothing seed-worthy.
+Return ONLY valid JSON array — no markdown, no code fences.
+
+Output format:
+[{"content": "...", "type": "preference", "tags": ["tag1", "tag2"]}]`;
 
 function safeParseTags(tagsStr) {
   try {
@@ -393,6 +422,99 @@ context.post("/", async (c) => {
         : identityResult.rows[0].crystal;
     } else {
       result.identity = null;
+    }
+  }
+
+  // 5. Auto-extraction — buffer conversation turns, extract seeds when threshold hit
+  if (body.auto_extract === true && message) {
+    // Check workspace setting
+    let autoExtractEnabled = false;
+    try {
+      const settingResult = await db.execute({
+        sql: "SELECT value FROM workspace_settings WHERE key = 'auto_extract_enabled'",
+        args: [],
+      });
+      autoExtractEnabled = settingResult.rows[0]?.value === "true";
+    } catch {
+      // Table might not exist yet — skip
+    }
+
+    if (autoExtractEnabled) {
+      const role = body.extract_role === "assistant" ? "assistant" : "user";
+      const charCount = message.length;
+
+      // Ensure conversation_buffer table exists
+      try {
+        await db.execute(
+          `CREATE TABLE IF NOT EXISTS conversation_buffer (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            char_count INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+          )`
+        );
+      } catch {
+        // Already exists — fine
+      }
+
+      // Append message to buffer (encrypt if workspace has key)
+      const bufferedContent = encKey ? await encryptField(message, encKey) : message;
+      await db.execute({
+        sql: "INSERT INTO conversation_buffer (role, content, char_count, created_at) VALUES (?, ?, ?, ?)",
+        args: [role, bufferedContent, charCount, nowISO],
+      });
+
+      // Check total buffer size
+      const sizeResult = await db.execute(
+        "SELECT SUM(char_count) as total_chars, COUNT(*) as row_count FROM conversation_buffer"
+      );
+      const totalChars = sizeResult.rows[0]?.total_chars || 0;
+
+      if (totalChars >= BUFFER_CHAR_THRESHOLD) {
+        // Read all buffered messages, format as transcript
+        const bufferRows = await db.execute(
+          "SELECT role, content, created_at FROM conversation_buffer ORDER BY created_at ASC, id ASC"
+        );
+
+        const transcriptLines = [];
+        for (const row of bufferRows.rows) {
+          const plainContent = encKey ? await decryptField(row.content, encKey) : row.content;
+          const label = row.role === "assistant" ? "Assistant" : "User";
+          transcriptLines.push(`${label}: ${plainContent}`);
+        }
+        const transcript = transcriptLines.join("\n\n");
+
+        // Run extraction
+        const { stored, error } = await extractMemories({
+          env: c.env,
+          db,
+          workspaceName,
+          encKey,
+          transcript,
+          systemPrompt: SEED_EXTRACTION_PROMPT,
+          maxMemories: 3,
+          dedupLimit: 10,
+          maxTokens: 400,
+          sourceTag: "source:auto-extract",
+        });
+
+        // Clear buffer regardless of extraction result
+        await db.execute("DELETE FROM conversation_buffer");
+
+        result.extracted = stored;
+        result.buffer_status = { chars: 0, threshold: BUFFER_CHAR_THRESHOLD, just_extracted: true };
+
+        if (error) {
+          result.extraction_error = error;
+        }
+      } else {
+        result.extracted = [];
+        result.buffer_status = { chars: totalChars, threshold: BUFFER_CHAR_THRESHOLD };
+      }
+    } else {
+      result.extracted = [];
+      result.buffer_status = { enabled: false };
     }
   }
 

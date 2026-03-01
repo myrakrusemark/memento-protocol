@@ -13,6 +13,7 @@ import {
   createTursoToken,
 } from "../services/turso.js";
 import { PLANS } from "../config/plans.js";
+import { logAuditEvent } from "../services/audit.js";
 
 /**
  * In-memory rate limit tracker.
@@ -75,7 +76,7 @@ function recordRequest(ip) {
 /**
  * Generate a new API key: mp_live_ + 32 random hex chars.
  */
-function generateApiKey() {
+export function generateApiKey() {
   return `mp_live_${randomBytes(16).toString("hex")}`;
 }
 
@@ -197,5 +198,57 @@ export function registerAuthRoutes(app) {
       },
       201
     );
+  });
+}
+
+/**
+ * Register authenticated auth routes on a Hono v1 sub-app.
+ * These require auth middleware (mounted inside /v1).
+ *
+ * POST /v1/auth/rotate — Rotate the current API key.
+ */
+export function registerAuthenticatedRoutes(v1) {
+  v1.post("/auth/rotate", async (c) => {
+    const userId = c.get("userId");
+    const oldKeyId = c.get("apiKeyId");
+
+    const controlDb = getControlDb();
+
+    // Look up old key prefix for audit logging (no PII)
+    const oldKeyRow = await controlDb.execute({
+      sql: "SELECT key_prefix FROM api_keys WHERE id = ?",
+      args: [oldKeyId],
+    });
+    const oldKeyPrefix = oldKeyRow.rows[0]?.key_prefix || "unknown";
+
+    // Generate new key
+    const newApiKey = generateApiKey();
+    const newKeyHash = createHash("sha256").update(newApiKey).digest("hex");
+    const newKeyId = randomUUID().slice(0, 8);
+    const newKeyPrefix = newApiKey.slice(0, 12);
+
+    // Insert new key FIRST — if this fails, old key stays active
+    await controlDb.execute({
+      sql: "INSERT INTO api_keys (id, user_id, key_hash, key_prefix, name) VALUES (?, ?, ?, ?, ?)",
+      args: [newKeyId, userId, newKeyHash, newKeyPrefix, "rotated"],
+    });
+
+    // Revoke old key AFTER new key is safely stored
+    await controlDb.execute({
+      sql: "UPDATE api_keys SET revoked_at = datetime('now') WHERE id = ?",
+      args: [oldKeyId],
+    });
+
+    logAuditEvent(controlDb, "key.rotated", {
+      userId,
+      details: `old key prefix: ${oldKeyPrefix}`,
+    });
+
+    return c.json({
+      api_key: newApiKey,
+      key_prefix: newKeyPrefix,
+      previous_key_revoked: true,
+      message: "Save this key now — it cannot be retrieved again.",
+    });
   });
 }

@@ -8,6 +8,7 @@
 
 import { createHash } from "node:crypto";
 import { getControlDb } from "../db/connection.js";
+import { logAuditEvent } from "../services/audit.js";
 
 /**
  * Hash an API key with SHA-256 for secure lookup.
@@ -22,8 +23,13 @@ export function hashApiKey(key) {
 export function authMiddleware() {
   return async (c, next) => {
     const authHeader = c.req.header("Authorization");
+    const ip =
+      c.req.header("CF-Connecting-IP") ||
+      c.req.header("X-Forwarded-For")?.split(",")[0]?.trim() ||
+      undefined;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      logAuditEvent(null, "auth.failed", { details: "no header", ip });
       return c.json(
         { content: [{ type: "text", text: "Invalid or missing API key" }] },
         401
@@ -33,6 +39,7 @@ export function authMiddleware() {
     const apiKey = authHeader.slice(7); // Strip "Bearer "
 
     if (!apiKey) {
+      logAuditEvent(null, "auth.failed", { details: "empty key", ip });
       return c.json(
         { content: [{ type: "text", text: "Invalid or missing API key" }] },
         401
@@ -43,13 +50,15 @@ export function authMiddleware() {
     const db = getControlDb();
 
     const result = await db.execute({
-      sql: `SELECT ak.id, ak.user_id, ak.revoked_at, u.plan
+      sql: `SELECT ak.id, ak.user_id, ak.revoked_at, ak.key_prefix, u.plan
             FROM api_keys ak JOIN users u ON ak.user_id = u.id
             WHERE ak.key_hash = ?`,
       args: [keyHash],
     });
 
     if (result.rows.length === 0) {
+      const prefix = apiKey.slice(0, 12);
+      logAuditEvent(db, "auth.failed", { details: `key prefix: ${prefix}`, ip });
       return c.json(
         { content: [{ type: "text", text: "Invalid or missing API key" }] },
         401
@@ -59,6 +68,11 @@ export function authMiddleware() {
     const row = result.rows[0];
 
     if (row.revoked_at) {
+      logAuditEvent(db, "auth.revoked_key_used", {
+        userId: row.user_id,
+        details: `key prefix: ${row.key_prefix}`,
+        ip,
+      });
       return c.json(
         { content: [{ type: "text", text: "Invalid or missing API key" }] },
         401

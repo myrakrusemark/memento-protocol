@@ -14,6 +14,7 @@
 import { Hono } from "hono";
 import { verifyWebhookSignature } from "../services/stripe.js";
 import { getControlDb } from "../db/connection.js";
+import { logAuditEvent } from "../services/audit.js";
 
 const stripeWebhook = new Hono();
 
@@ -34,10 +35,21 @@ stripeWebhook.post("/", async (c) => {
     event = result.event;
   } catch (err) {
     console.error("Webhook signature verification failed:", err.message);
+    logAuditEvent(null, "webhook.rejected", { details: "invalid signature" });
     return c.json({ error: "Invalid signature" }, 400);
   }
 
   const controlDb = getControlDb();
+
+  // --- Idempotency: skip duplicate events (Stripe retries on timeout/error) ---
+  const existing = await controlDb.execute({
+    sql: "SELECT 1 FROM processed_webhook_events WHERE event_id = ?",
+    args: [event.id],
+  });
+  if (existing.rows.length > 0) {
+    console.log(`Duplicate webhook event ${event.id}, skipping`);
+    return c.json({ received: true });
+  }
 
   try {
     switch (event.type) {
@@ -64,6 +76,13 @@ stripeWebhook.post("/", async (c) => {
         // Unhandled event type — acknowledge without processing
         break;
     }
+
+    // Record successful processing for idempotency
+    // TODO: Add scheduled cleanup of events older than 90 days in scheduler.js
+    await controlDb.execute({
+      sql: "INSERT INTO processed_webhook_events (event_id, event_type) VALUES (?, ?)",
+      args: [event.id, event.type],
+    });
   } catch (err) {
     // Log but still return 200 — Stripe will retry on non-2xx,
     // and a bug in our handler shouldn't cause infinite retries
@@ -84,23 +103,56 @@ stripeWebhook.post("/", async (c) => {
 async function handleCheckoutCompleted(db, session) {
   const userId = session.client_reference_id;
   if (!userId) {
-    console.error("checkout.session.completed missing client_reference_id");
+    console.info("checkout.session.completed missing client_reference_id — likely a direct Stripe purchase without our flow");
     return;
+  }
+
+  // Validate payment actually completed
+  if (session.payment_status !== "paid") {
+    console.warn(`SECURITY: checkout for user ${userId} has payment_status '${session.payment_status}', not 'paid' — skipping upgrade`);
+    return;
+  }
+
+  // Validate this is a subscription checkout, not a one-time payment
+  if (session.mode !== "subscription") {
+    console.warn(`SECURITY: checkout for user ${userId} has mode '${session.mode}', not 'subscription' — skipping upgrade`);
+    return;
+  }
+
+  // Validate price ID if configured (Stripe payment links may not include line items in webhook)
+  const expectedPriceId = process.env.STRIPE_PRO_PRICE_ID;
+  if (expectedPriceId) {
+    const priceId = session.metadata?.price_id;
+    if (priceId && priceId !== expectedPriceId) {
+      console.warn(`SECURITY: checkout for user ${userId} has price_id '${priceId}', expected '${expectedPriceId}' — skipping upgrade`);
+      return;
+    }
+    if (!priceId) {
+      console.info(`checkout for user ${userId}: no price_id in metadata (payment link flow) — validated payment_status and mode`);
+    }
+  } else {
+    console.info("STRIPE_PRO_PRICE_ID not set — skipping price validation");
   }
 
   const customerId = session.customer;
   const subscriptionId = session.subscription;
+  const checkoutEmail = session.customer_details?.email || null;
 
   await db.execute({
     sql: `UPDATE users
           SET plan = 'pro',
               stripe_customer_id = ?,
               stripe_subscription_id = ?,
+              email = CASE
+                WHEN ? IS NOT NULL AND email LIKE '%@memento.local' THEN ?
+                ELSE email
+              END,
               updated_at = datetime('now')
           WHERE id = ?`,
-    args: [customerId, subscriptionId, userId],
+    args: [customerId, subscriptionId, checkoutEmail, checkoutEmail, userId],
   });
 
+  logAuditEvent(db, "plan.upgraded", { userId, details: "free → pro" });
   console.log(`User ${userId} upgraded to pro (customer: ${customerId})`);
 }
 
@@ -127,42 +179,79 @@ async function handleSubscriptionDeleted(db, subscription) {
     return;
   }
 
+  logAuditEvent(db, "plan.downgraded", { details: "status: deleted" });
   console.log(`Customer ${customerId} downgraded to free (subscription deleted)`);
 }
 
 /**
  * Handle customer.subscription.updated — react to status changes.
  *
- * - active/trialing → ensure pro
- * - canceled/unpaid → downgrade to free
- * - past_due → no action (grace period while Stripe retries)
+ * Covers all 8 Stripe subscription statuses:
+ *   active, trialing        → ensure pro
+ *   past_due, paused        → grace period (keep current plan)
+ *   incomplete              → no upgrade (awaiting initial payment)
+ *   canceled, unpaid,
+ *   incomplete_expired      → downgrade to free
+ *   (unknown)               → fail-safe downgrade to free
  */
 async function handleSubscriptionUpdated(db, subscription) {
   const customerId = subscription.customer;
   const status = subscription.status;
 
-  if (status === "active" || status === "trialing") {
-    await db.execute({
-      sql: `UPDATE users
-            SET plan = 'pro',
-                stripe_subscription_id = ?,
-                updated_at = datetime('now')
-            WHERE stripe_customer_id = ?`,
-      args: [subscription.id, customerId],
-    });
-  } else if (status === "canceled" || status === "unpaid") {
-    await db.execute({
-      sql: `UPDATE users
-            SET plan = 'free',
-                stripe_subscription_id = NULL,
-                updated_at = datetime('now')
-            WHERE stripe_customer_id = ?`,
-      args: [customerId],
-    });
-    console.log(`Customer ${customerId} downgraded to free (status: ${status})`);
-  } else if (status === "past_due") {
-    // Grace period — user keeps pro access while Stripe retries payment
-    console.warn(`Customer ${customerId} is past_due — grace period active`);
+  switch (status) {
+    // Active states — ensure pro access
+    case "active":
+    case "trialing":
+      await db.execute({
+        sql: `UPDATE users
+              SET plan = 'pro',
+                  stripe_subscription_id = ?,
+                  updated_at = datetime('now')
+              WHERE stripe_customer_id = ?`,
+        args: [subscription.id, customerId],
+      });
+      break;
+
+    // Grace period — keep current plan, payment is being retried
+    case "past_due":
+    case "paused":
+      console.warn(`Customer ${customerId} subscription is ${status} — grace period active`);
+      break;
+
+    // Initial payment incomplete — do NOT upgrade (e.g. 3D Secure pending)
+    case "incomplete":
+      console.warn(`Customer ${customerId} subscription incomplete — awaiting initial payment`);
+      break;
+
+    // Terminal states — downgrade to free
+    case "canceled":
+    case "unpaid":
+    case "incomplete_expired":
+      await db.execute({
+        sql: `UPDATE users
+              SET plan = 'free',
+                  stripe_subscription_id = NULL,
+                  updated_at = datetime('now')
+              WHERE stripe_customer_id = ?`,
+        args: [customerId],
+      });
+      logAuditEvent(db, "plan.downgraded", { details: `status: ${status}` });
+      console.log(`Customer ${customerId} downgraded to free (status: ${status})`);
+      break;
+
+    // Unknown status — fail-safe downgrade (better to accidentally downgrade than grant access)
+    default:
+      await db.execute({
+        sql: `UPDATE users
+              SET plan = 'free',
+                  stripe_subscription_id = NULL,
+                  updated_at = datetime('now')
+              WHERE stripe_customer_id = ?`,
+        args: [customerId],
+      });
+      logAuditEvent(db, "plan.downgraded", { details: `status: ${status}` });
+      console.warn(`Customer ${customerId}: unknown subscription status '${status}' — fail-safe downgrade to free`);
+      break;
   }
 }
 

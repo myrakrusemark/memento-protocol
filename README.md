@@ -150,7 +150,7 @@ not just at session boundaries.
 
 Installing Memento gives your agent memory. *The Protocol* is the system you build around it — orientation after context loss, automatic recall, writing discipline, distillation before context resets, identity that persists across sessions.
 
-Full guide: **[The Protocol](https://hifathom.com/projects/memento/protocol)** on hifathom.com.
+Full guide: **[The Protocol](https://hifathom.com/memento/docs/protocol)** on hifathom.com.
 
 ## Hooks
 
@@ -168,19 +168,19 @@ See **[scripts/README.md](scripts/README.md)** for setup, configuration, and how
 
 ## Dashboard
 
-Browse and manage memories visually at [hifathom.com/dashboard](https://hifathom.com/dashboard). Paste your API key and workspace name to connect.
+Browse and manage memories visually at [hifathom.com/memento/dashboard](https://hifathom.com/memento/dashboard). Paste your API key and workspace name to connect.
 
 ---
 
 ## Documentation
 
-Full reference docs at [hifathom.com/projects/memento](https://hifathom.com/projects/memento):
+Full reference docs at [hifathom.com/memento](https://hifathom.com/memento):
 
-- **[Quick Start](https://hifathom.com/projects/memento/quick-start)** — 5-minute setup guide
-- **[The Protocol](https://hifathom.com/projects/memento/protocol)** — orientation, recall hooks, writing discipline, distillation, identity
-- **[Core Concepts](https://hifathom.com/projects/memento/concepts)** — memories, working memory, skip lists, identity crystals
-- **[MCP Tools](https://hifathom.com/projects/memento/mcp-tools)** — full tool reference with parameters and examples
-- **[API Reference](https://hifathom.com/projects/memento/api)** — REST endpoints, request/response schemas, authentication
+- **[Quick Start](https://hifathom.com/memento/docs/quick-start)** — 5-minute setup guide
+- **[The Protocol](https://hifathom.com/memento/docs/protocol)** — orientation, recall hooks, writing discipline, distillation, identity
+- **[Core Concepts](https://hifathom.com/memento/docs/concepts)** — memories, working memory, skip lists, identity crystals
+- **[MCP Tools](https://hifathom.com/memento/docs/mcp-tools)** — full tool reference with parameters and examples
+- **[API Reference](https://hifathom.com/memento/docs/api)** — REST endpoints, request/response schemas, authentication
 - **[Self-Hosting](docs/self-hosting.md)** — deploy your own instance with Cloudflare Workers + Turso
 
 ---

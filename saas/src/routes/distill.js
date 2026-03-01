@@ -9,14 +9,10 @@
  */
 
 import { Hono } from "hono";
-import { randomUUID } from "node:crypto";
-import { embedAndStore } from "../services/embeddings.js";
-import { encryptField, decryptField } from "../services/crypto.js";
+import { extractMemories } from "../services/extraction.js";
 
 const distill = new Hono();
 
-const VALID_TYPES = new Set(["fact", "decision", "instruction", "observation", "preference"]);
-const MAX_MEMORIES_PER_DISTILL = 20;
 const MIN_TRANSCRIPT_LENGTH = 200;
 const MAX_TRANSCRIPT_LENGTH = 100_000;
 
@@ -70,7 +66,6 @@ distill.post("/", async (c) => {
     });
   }
 
-  // Check AI binding
   if (!c.env?.AI) {
     return c.json(
       { content: [{ type: "text", text: "AI binding unavailable — cannot distill." }] },
@@ -80,117 +75,57 @@ distill.post("/", async (c) => {
 
   const db = c.get("workspaceDb");
   const workspaceName = c.get("workspaceName");
-  const now = new Date().toISOString();
-
-  // Fetch recent non-consolidated, non-expired memories for dedup context
-  const existing = await db.execute({
-    sql: `SELECT id, content, type, tags FROM memories
-          WHERE consolidated = 0
-            AND (expires_at IS NULL OR expires_at > ?)
-          ORDER BY created_at DESC
-          LIMIT 200`,
-    args: [now],
-  });
-
-  // Decrypt existing memories for dedup context
   const encKey = c.get("encryptionKey");
-  if (encKey) {
-    for (const row of existing.rows) {
-      row.content = await decryptField(row.content, encKey);
-    }
-  }
-
-  const existingBlock = existing.rows.length > 0
-    ? existing.rows.map((r, i) => `${i + 1}. ${r.content}`).join("\n")
-    : "(no existing memories)";
 
   const cappedTranscript = transcript.slice(0, MAX_TRANSCRIPT_LENGTH);
 
-  // Call Llama 3.1 8B
-  let rawResponse;
-  try {
-    const result = await c.env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `EXISTING MEMORIES (do not duplicate these):\n${existingBlock}\n\n---\n\nTRANSCRIPT:\n${cappedTranscript}`,
-        },
-      ],
-      max_tokens: 2000,
-    });
+  const { stored, rawResponse, error } = await extractMemories({
+    env: c.env,
+    db,
+    workspaceName,
+    encKey,
+    transcript: cappedTranscript,
+    systemPrompt: SYSTEM_PROMPT,
+    maxMemories: 20,
+    dedupLimit: 200,
+    maxTokens: 2000,
+    sourceTag: "source:distill:llama-3.1-8b",
+  });
 
-    if (!result?.response) {
-      return c.json(
-        { content: [{ type: "text", text: "AI call returned empty response." }] },
-        502
-      );
-    }
-
-    rawResponse = result.response;
-  } catch (err) {
+  if (error === "AI binding unavailable") {
     return c.json(
-      { content: [{ type: "text", text: `AI call failed: ${err.message || "unknown error"}` }] },
+      { content: [{ type: "text", text: "AI binding unavailable — cannot distill." }] },
+      503
+    );
+  }
+
+  if (error === "AI call returned empty response") {
+    return c.json(
+      { content: [{ type: "text", text: "AI call returned empty response." }] },
       502
     );
   }
 
-  // Parse JSON — strip code fences if present, try regex fallback
-  let parsed;
-  try {
-    const cleaned = rawResponse.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-    parsed = JSON.parse(cleaned);
-  } catch {
-    // Regex fallback: find first [...] in the response
-    const match = rawResponse.match(/\[[\s\S]*\]/);
-    if (match) {
-      try {
-        parsed = JSON.parse(match[0]);
-      } catch {
-        parsed = null;
-      }
-    }
+  if (error && error.startsWith("AI call failed:")) {
+    return c.json(
+      { content: [{ type: "text", text: error }] },
+      502
+    );
   }
 
-  if (!Array.isArray(parsed)) {
+  if (error === "Could not parse LLM output") {
     return c.json({
       content: [{
         type: "text",
-        text: `No memories extracted (could not parse LLM output). Raw snippet: ${rawResponse.slice(0, 200)}`,
+        text: `No memories extracted (could not parse LLM output). Raw snippet: ${(rawResponse || "").slice(0, 200)}`,
       }],
     });
   }
 
-  if (parsed.length === 0) {
+  if (stored.length === 0) {
     return c.json({
       content: [{ type: "text", text: "No novel memories found in transcript." }],
     });
-  }
-
-  // Validate, normalize, and store
-  const stored = [];
-  const capped = parsed.slice(0, MAX_MEMORIES_PER_DISTILL);
-
-  for (const entry of capped) {
-    if (!entry.content || typeof entry.content !== "string") continue;
-
-    const id = randomUUID().slice(0, 8);
-    const type = VALID_TYPES.has(entry.type) ? entry.type : "observation";
-    const entryTags = Array.isArray(entry.tags)
-      ? entry.tags.filter((t) => typeof t === "string").map((t) => t.toLowerCase()).slice(0, 7)
-      : [];
-    const tags = JSON.stringify([...entryTags, "source:distill:llama-3.1-8b"]);
-
-    const storedContent = encKey ? await encryptField(entry.content, encKey) : entry.content;
-    await db.execute({
-      sql: `INSERT INTO memories (id, content, type, tags) VALUES (?, ?, ?, ?)`,
-      args: [id, storedContent, type, tags],
-    });
-
-    // Fire-and-forget embedding (uses plaintext for vector indexing)
-    embedAndStore(c.env, workspaceName, id, entry.content).catch(() => {});
-
-    stored.push({ id, content: entry.content, type });
   }
 
   const summary = stored.map((m) => `- **${m.id}** (${m.type}): ${m.content}`).join("\n");

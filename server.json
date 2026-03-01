@@ -17,7 +17,7 @@
       },
       "environmentVariables": [
         {
-          "description": "Your Memento Protocol API key (get one at https://hifathom.com/projects/memento)",
+          "description": "Your Memento Protocol API key (get one at https://hifathom.com/memento)",
           "isRequired": true,
           "format": "string",
           "isSecret": true,

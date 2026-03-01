@@ -208,3 +208,89 @@ describe("POST /v1/auth/signup", () => {
     assert.equal(storeRes.status, 201);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Key rotation
+// ---------------------------------------------------------------------------
+
+describe("POST /v1/auth/rotate", () => {
+  let h;
+
+  beforeEach(async () => {
+    h = await createTestHarness();
+  });
+
+  afterEach(() => {
+    h.cleanup();
+  });
+
+  it("returns a new working API key", async () => {
+    const res = await h.request("POST", "/v1/auth/rotate");
+    assert.equal(res.status, 200);
+
+    const data = await res.json();
+    assert.ok(data.api_key.startsWith("mp_live_"), "new key has correct prefix");
+    assert.equal(data.api_key.length, 40, "key is 40 chars");
+    assert.ok(data.key_prefix, "key_prefix is present");
+    assert.equal(data.previous_key_revoked, true);
+
+    // New key should authenticate
+    const healthRes = await h.app.request(
+      new Request("http://localhost/v1/health", {
+        headers: {
+          Authorization: `Bearer ${data.api_key}`,
+          "X-Memento-Workspace": h.seed.workspaceName,
+        },
+      })
+    );
+    assert.equal(healthRes.status, 200);
+  });
+
+  it("revokes the old key after rotation", async () => {
+    const oldKey = h.seed.apiKey;
+
+    const res = await h.request("POST", "/v1/auth/rotate");
+    assert.equal(res.status, 200);
+
+    // Old key should be rejected
+    const oldKeyRes = await h.app.request(
+      new Request("http://localhost/v1/health", {
+        headers: {
+          Authorization: `Bearer ${oldKey}`,
+          "X-Memento-Workspace": h.seed.workspaceName,
+        },
+      })
+    );
+    assert.equal(oldKeyRes.status, 401);
+  });
+
+  it("returns a different key each time", async () => {
+    const res1 = await h.request("POST", "/v1/auth/rotate");
+    const data1 = await res1.json();
+
+    // Use the new key for the second rotation
+    const res2 = await h.app.request(
+      new Request("http://localhost/v1/auth/rotate", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${data1.api_key}`,
+          "X-Memento-Workspace": h.seed.workspaceName,
+        },
+      })
+    );
+    assert.equal(res2.status, 200);
+    const data2 = await res2.json();
+
+    assert.notEqual(data1.api_key, data2.api_key);
+  });
+
+  it("rejects unauthenticated requests", async () => {
+    const res = await h.app.request(
+      new Request("http://localhost/v1/auth/rotate", {
+        method: "POST",
+        headers: {},
+      })
+    );
+    assert.equal(res.status, 401);
+  });
+});
