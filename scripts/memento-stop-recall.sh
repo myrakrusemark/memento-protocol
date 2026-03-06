@@ -96,8 +96,8 @@ try:
 
     memories = data.get('memories', {}).get('matches', [])
     if memories:
-        for m in memories[:${RECALL_LIMIT:-5}]:
-            content = m['content'][:${RECALL_MAX_LENGTH:-120}]
+        for m in memories[:${RECALL_LIMIT:-7}]:
+            content = m['content']
             t = abbrev.get(m['type'], m['type'])
             lines.append(f'  🔹 {content} [{m[\"id\"]} {t}]')
             count += 1
