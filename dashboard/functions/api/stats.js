@@ -73,30 +73,24 @@ export async function onRequestGet(context) {
       try {
         const wsDb = getWorkspaceDb(ws.db_url, ws.db_token);
 
-        const [memCountResult, memTypesResult, itemCountResult, lastActivityResult, memGrowthResult] =
-          await Promise.all([
-            wsDb.execute("SELECT COUNT(*) as count FROM memories"),
-            wsDb.execute(
-              `SELECT type, COUNT(*) as count FROM memories
-               WHERE consolidated = 0 GROUP BY type`
-            ),
-            wsDb.execute(
-              `SELECT COUNT(*) as count FROM working_memory_items
-               WHERE status != 'archived'`
-            ),
-            wsDb.execute(
-              `SELECT MAX(ts) as ts FROM (
-                 SELECT MAX(created_at) as ts FROM memories
-                 UNION ALL
-                 SELECT MAX(updated_at) as ts FROM working_memory_items
-               )`
-            ),
-            wsDb.execute(
-              `SELECT DATE(created_at) as day, COUNT(*) as count
-               FROM memories WHERE created_at >= DATE('now', '-30 days')
-               GROUP BY day ORDER BY day`
-            ),
-          ]);
+        // Use batch() to send all queries in a single HTTP request
+        const batchResults = await wsDb.batch([
+          "SELECT COUNT(*) as count FROM memories",
+          `SELECT type, COUNT(*) as count FROM memories
+           WHERE consolidated = 0 GROUP BY type`,
+          `SELECT COUNT(*) as count FROM working_memory_items
+           WHERE status != 'archived'`,
+          `SELECT MAX(ts) as ts FROM (
+             SELECT MAX(created_at) as ts FROM memories
+             UNION ALL
+             SELECT MAX(updated_at) as ts FROM working_memory_items
+           )`,
+          `SELECT DATE(created_at) as day, COUNT(*) as count
+           FROM memories WHERE created_at >= DATE('now', '-30 days')
+           GROUP BY day ORDER BY day`,
+        ]);
+
+        const [memCountResult, memTypesResult, itemCountResult, lastActivityResult, memGrowthResult] = batchResults;
 
         const memCount = Number(memCountResult.rows[0]?.count ?? 0);
         const itemCount = Number(itemCountResult.rows[0]?.count ?? 0);

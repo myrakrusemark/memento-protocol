@@ -261,6 +261,18 @@ export class HostedStorageAdapter extends StorageInterface {
     return res;
   }
 
+  async extractMemories(_wsPath, { transcript, mode, max_memories, source_tag }) {
+    const body = {};
+    if (transcript) body.transcript = transcript;
+    if (mode) body.mode = mode;
+    if (max_memories) body.max_memories = max_memories;
+    if (source_tag) body.source_tag = source_tag;
+
+    const res = await this._fetchJson("POST", "/v1/extract", body);
+    if (res.error && !res.stored) return { error: res.error };
+    return res;
+  }
+
   async getIdentity(_wsPath) {
     const { text, isError } = await this._fetch("GET", "/v1/identity");
     if (isError) return { error: text };

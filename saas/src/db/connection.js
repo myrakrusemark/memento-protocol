@@ -204,13 +204,6 @@ CREATE TABLE IF NOT EXISTS working_memory_items (
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS conversation_buffer (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  role TEXT NOT NULL,
-  content TEXT NOT NULL,
-  char_count INTEGER NOT NULL,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
 `;
 
 /**

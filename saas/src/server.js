@@ -25,6 +25,7 @@ import context from "./routes/context.js";
 import health from "./routes/health.js";
 import admin from "./routes/admin.js";
 import distill from "./routes/distill.js";
+import extract from "./routes/extract.js";
 import images from "./routes/images.js";
 import settings from "./routes/settings.js";
 import { registerAuthRoutes, registerAuthenticatedRoutes } from "./routes/auth.js";
@@ -86,6 +87,7 @@ export function createApp() {
   v1.route("/health", health);
   v1.route("/admin", admin);
   v1.route("/distill", distill);
+  v1.route("/extract", extract);
   v1.route("/images", images);
   v1.route("/settings", settings);
   v1.route("/billing", billingAuthenticated);

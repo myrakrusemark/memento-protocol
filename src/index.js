@@ -434,6 +434,70 @@ This is reconsolidation — like how the brain rebuilds memories on recall. Freq
 );
 
 // ---------------------------------------------------------------------------
+// Tool: memento_extract
+// ---------------------------------------------------------------------------
+
+server.tool(
+  "memento_extract",
+  `Extract memories from a conversation transcript using LLM. Use this to extract memories from a pasted transcript.
+
+Two modes:
+- "distill" (default): Full extraction — facts, decisions, instructions, observations. Up to 20 memories.
+- "seeds": Relational/experiential texture — preferences, emotions, sensory details. Up to 3 memories.
+
+A transcript is required.`,
+  {
+    transcript: z.string().describe("Raw conversation text to extract memories from."),
+    mode: z.enum(["distill", "seeds"]).optional().describe("Extraction mode (default: distill)"),
+    max_memories: z.number().optional().describe("Override max memories to extract"),
+  },
+  async ({ transcript, mode, max_memories }) => {
+    const result = await storage.extractMemories(null, {
+      transcript,
+      mode,
+      max_memories,
+    });
+
+    if (result.error && !result.stored) {
+      return {
+        content: [{ type: "text", text: `Error: ${result.error}` }],
+        isError: true,
+      };
+    }
+
+    if (result.error) {
+      // Partial success — extraction ran but had issues
+      const summary = result.stored?.length > 0
+        ? result.stored.map((m) => `- **${m.id}** (${m.type}): ${m.content}`).join("\n")
+        : "No memories extracted.";
+      return {
+        content: [{
+          type: "text",
+          text: `Extraction completed with warning: ${result.error}\n\n${summary}`,
+        }],
+      };
+    }
+
+    if (!result.stored || result.stored.length === 0) {
+      return {
+        content: [{
+          type: "text",
+          text: `No novel memories found (mode: ${result.mode || mode || "distill"}, source: ${result.source || "unknown"}).`,
+        }],
+      };
+    }
+
+    const summary = result.stored.map((m) => `- **${m.id}** (${m.type}): ${m.content}`).join("\n");
+    return {
+      content: [{
+        type: "text",
+        text: `Extracted ${result.count} memor${result.count === 1 ? "y" : "ies"} (mode: ${result.mode}, source: ${result.source}):\n\n${summary}`,
+      }],
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
 // Tool: memento_skip_add
 // ---------------------------------------------------------------------------
 

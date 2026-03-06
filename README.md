@@ -10,7 +10,7 @@ AI agents have anterograde amnesia — every session starts blank. The Memento P
 npx memento-mcp init
 ```
 
-This creates `.memento.json`, detects your agent (Claude Code, Codex, Gemini CLI, OpenCode), writes the correct MCP config, and sets up hooks (Claude Code only) — all in one command.
+This creates `.memento.json`, detects your agent (Claude Code, Codex, Gemini CLI, OpenCode), writes the correct MCP config, and registers hooks — all in one command.
 
 ---
 
@@ -154,13 +154,29 @@ Full guide: **[The Protocol](https://hifathom.com/memento/docs/protocol)** on hi
 
 ## Hooks
 
-Hooks automate memory at session boundaries — recall on every message, distillation before context loss. Three production-ready scripts are included in `scripts/`:
+Hooks automate memory at session boundaries — recall on every message, distillation before context loss, identity injection at session start. Five production-ready scripts are included in `scripts/`:
 
-| Script | Event | What it does |
-|--------|-------|-------------|
-| `memento-userprompt-recall.sh` | UserPromptSubmit | Recalls memories relevant to the user's message |
-| `memento-stop-recall.sh` | Stop | Recalls memories from the assistant's own output (autonomous work) |
-| `memento-precompact-distill.sh` | PreCompact | Extracts memories from the conversation before context compression |
+| Script | What it does |
+|--------|-------------|
+| `memento-sessionstart-identity.sh` | Injects identity crystal + version check at session start |
+| `memento-userprompt-recall.sh` | Recalls memories relevant to the user's message |
+| `memento-stop-recall.sh` | Recalls memories from the assistant's own output (autonomous work) |
+| `memento-precompact-distill.sh` | Extracts memories from the conversation before context compression |
+| `memento-codex-notify.sh` | Stores post-turn summaries from Codex CLI as memory observations |
+
+### Agent hook support
+
+`npx memento-mcp init` auto-detects your agent and registers the appropriate hooks. Not all agents support the same hook events — here's what gets wired up:
+
+| Hook | Claude Code | Gemini CLI | Codex CLI |
+|------|:-----------:|:----------:|:---------:|
+| Session start / identity | `SessionStart` | `SessionStart` | — |
+| Recall on user message | `UserPromptSubmit` | `BeforeAgent` | — |
+| Recall on assistant output | `Stop` | `SessionEnd` | — |
+| Pre-compaction distillation | `PreCompact` | `PreCompress` | — |
+| Post-turn memory storage | — | — | `notify` |
+
+**OpenCode** uses a TypeScript plugin system — MCP tools work, but hooks require a different integration pattern.
 
 See **[scripts/README.md](scripts/README.md)** for setup, configuration, and how to write your own hooks.
 

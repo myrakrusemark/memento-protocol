@@ -42,7 +42,7 @@ print('true' if hook.get('enabled', True) else 'false')
     MEMENTO_WORKSPACE="${MEMENTO_WORKSPACE:-$(echo "$CONFIG_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('workspace',''))" 2>/dev/null)}"
 
     RECALL_LIMIT=$(echo "$CONFIG_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('hooks',{}).get('$HOOK_NAME',{}).get('limit',5))" 2>/dev/null)
-    RECALL_MAX_LENGTH=$(echo "$CONFIG_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('hooks',{}).get('$HOOK_NAME',{}).get('maxLength',200))" 2>/dev/null)
+    RECALL_MAX_LENGTH=$(echo "$CONFIG_JSON" | python3 -c "import json,sys; print(json.load(sys.stdin).get('hooks',{}).get('$HOOK_NAME',{}).get('maxLength',120))" 2>/dev/null)
 fi
 # --- End config block ---
 
@@ -78,13 +78,13 @@ QUERY="${ASSISTANT_MSG:0:500}"
 # Toast: start retrieving
 "$TOAST" memento "⏳ Autonomous recall..." &>/dev/null
 
-# Call Memento /v1/context (with auto_extract for passive memory formation)
+# Call Memento /v1/context
 RESULT=$(curl -s --max-time 8 \
     -X POST \
     -H "Authorization: Bearer $MEMENTO_KEY" \
     -H "X-Memento-Workspace: $MEMENTO_WS" \
     -H "Content-Type: application/json" \
-    -d "{\"message\": $(echo "$QUERY" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'), \"include\": [\"memories\", \"skip_list\"], \"auto_extract\": true, \"extract_role\": \"assistant\", \"extract_content\": $(echo "$ASSISTANT_MSG" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')}" \
+    -d "{\"message\": $(echo "$QUERY" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'), \"include\": [\"memories\", \"skip_list\"]}" \
     "$MEMENTO_API/v1/context" 2>/dev/null \
 | python3 -c "
 import json, sys
@@ -92,78 +92,50 @@ try:
     data = json.load(sys.stdin)
     lines = []
     count = 0
+    abbrev = {'instruction':'instr','observation':'obs','decision':'dec','preference':'pref'}
 
     memories = data.get('memories', {}).get('matches', [])
     if memories:
         for m in memories[:${RECALL_LIMIT:-5}]:
-            tags = m.get('tags', [])
-            tag_str = f' [{\", \".join(tags)}]' if tags else ''
-            content = m['content'][:${RECALL_MAX_LENGTH:-200}]
-            score = m.get('score', '?')
-            date_str = f' {m[\"created_at\"][:10]}' if m.get('created_at') else ''
-            lines.append(f'  {m[\"id\"]} ({m[\"type\"]}, {score}{date_str}){tag_str} — {content}')
+            content = m['content'][:${RECALL_MAX_LENGTH:-120}]
+            t = abbrev.get(m['type'], m['type'])
+            lines.append(f'  🔹 {content} [{m[\"id\"]} {t}]')
             count += 1
 
     skip_matches = data.get('skip_matches', [])
     if skip_matches:
-        lines.append('')
-        lines.append('SKIP LIST WARNINGS:')
         for s in skip_matches:
-            lines.append(f'  ⚠ SKIP: {s[\"item\"]} — {s[\"reason\"]} (expires: {s[\"expires\"]})')
+            lines.append(f'  Skip: {s[\"item\"]} — {s[\"reason\"]} (expires {s[\"expires\"]})')
 
-    # Auto-extracted memories
-    extracted = data.get('extracted', [])
-    if extracted:
-        lines.append('')
-        lines.append('MEMORIES STORED:')
-        for e in extracted:
-            etags = [t for t in e.get('tags', []) if t != 'source:auto-extract']
-            etag_str = f' [{\", \".join(etags)}]' if etags else ''
-            lines.append(f'  {e[\"id\"]} ({e.get(\"type\", \"observation\")}){etag_str} — {e[\"content\"]}')
-
-    # Output: recall_count \t extracted_count \t detail
-    extracted_count = len(extracted)
     detail = '\n'.join(lines)
-    print(f'{count}\t{extracted_count}\t{detail}')
+    print(f'{count}\t{detail}')
 except Exception:
-    print('0\t0\t')
+    print('0\t')
 " 2>/dev/null)
 
-# Parse count, extracted count, and detail
+# Parse count and detail
 SAAS_COUNT=$(echo "$RESULT" | head -1 | cut -f1)
-EXTRACTED_COUNT=$(echo "$RESULT" | head -1 | cut -f2)
-SAAS_DETAIL=$(echo "$RESULT" | head -1 | cut -f3-)
+SAAS_DETAIL=$(echo "$RESULT" | head -1 | cut -f2-)
 REMAINING=$(echo "$RESULT" | tail -n +2)
 if [ -n "$REMAINING" ]; then
     SAAS_DETAIL="$SAAS_DETAIL"$'\n'"$REMAINING"
 fi
 
 if [ -z "$SAAS_COUNT" ] || [ "$SAAS_COUNT" = "0" ]; then
-    if [ -n "$EXTRACTED_COUNT" ] && [ "$EXTRACTED_COUNT" != "0" ]; then
-        "$TOAST" memento "✓ ${EXTRACTED_COUNT} memories stored" &>/dev/null
-    else
-        "$TOAST" memento "✓ No memories matched" &>/dev/null
-        exit 0
-    fi
-else
-    if [ -n "$EXTRACTED_COUNT" ] && [ "$EXTRACTED_COUNT" != "0" ]; then
-        "$TOAST" memento "✓ ${SAAS_COUNT} recalled, ${EXTRACTED_COUNT} stored" &>/dev/null
-    else
-        "$TOAST" memento "✓ ${SAAS_COUNT} memories recalled" &>/dev/null
-    fi
+    "$TOAST" memento "✓ No memories matched" &>/dev/null
+    exit 0
 fi
+
+"$TOAST" memento "✓ ${SAAS_COUNT} memories recalled" &>/dev/null
 
 # Build summary line
-SUMMARY="Autonomous Recall: ${SAAS_COUNT} memories"
-if [ -n "$EXTRACTED_COUNT" ] && [ "$EXTRACTED_COUNT" != "0" ]; then
-    SUMMARY="${SUMMARY}, ${EXTRACTED_COUNT} memories stored"
-fi
+SUMMARY="Memento Recall (${SAAS_COUNT})"
 
-# Block the Stop so Claude continues — the reason becomes Claude's next instruction.
-REASON="${SUMMARY} surfaced from your last response.
+# Block the Stop so recalled memories are injected into context.
+# If no memories are relevant, respond with <...> to signal active silence.
+REASON="${SUMMARY}:
 ${SAAS_DETAIL}
-
-You have absorbed these memories into context. If any recalled memory is stale, wrong, or overlaps with others — update, delete, or consolidate it now. Otherwise continue naturally."
+Stale or wrong? memento_memory_delete · memento_consolidate · memento_store. Otherwise <...>."
 
 python3 -c "
 import json, sys

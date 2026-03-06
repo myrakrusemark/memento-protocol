@@ -119,7 +119,7 @@ before compaction. Trust the hooks. Focus on writing good memories.`;
 // ---------------------------------------------------------------------------
 
 const HEADLESS_CMDS = {
-  "claude-code": (prompt) => ["claude", "-p", prompt],
+  "claude-code": (prompt) => ["claude", "-p", "--dangerously-skip-permissions", prompt],
   "codex":       (prompt) => ["codex", "exec", prompt],
   "gemini":      (prompt) => ["gemini", prompt],
   "opencode":    (prompt) => ["opencode", "run", prompt],
@@ -196,10 +196,23 @@ function writeJsonFile(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n");
 }
 
-function mergeJsonFile(filePath, data) {
-  const existing = readJsonFile(filePath) || {};
-  const merged = deepMerge(existing, data);
-  writeJsonFile(filePath, merged);
+/**
+ * Idempotently register a hook in a settings object.
+ * Works for both Claude Code and Gemini CLI (same JSON structure).
+ * Returns true if a new hook was added, false if already present.
+ */
+function ensureHook(settings, eventName, command, timeout) {
+  const existing = settings.hooks?.[eventName] || [];
+  const alreadyRegistered = existing.some((entry) =>
+    entry.hooks?.some((h) => h.command === command)
+  );
+  if (alreadyRegistered) return false;
+  if (!settings.hooks) settings.hooks = {};
+  settings.hooks[eventName] = [
+    ...existing,
+    { hooks: [{ type: "command", command, timeout }] },
+  ];
+  return true;
 }
 
 function appendToGitignore(cwd, line) {
@@ -452,13 +465,16 @@ async function runInit(flags = {}) {
 
   const hasClaude = selectedAgents.includes("claude-code");
 
-  // 5. Hooks — only if Claude Code selected
+  // 5. Hooks — if any hook-supporting agent is selected (Claude Code, Gemini CLI)
+  const hasGemini = selectedAgents.includes("gemini");
+  const hasHookAgent = hasClaude || hasGemini;
+
   let enableUserPrompt = false;
   let enableStop = false;
   let enablePreCompact = false;
   let enableSessionStart = false;
 
-  if (hasClaude) {
+  if (hasHookAgent) {
     if (nonInteractive) {
       // All hooks on by default in non-interactive mode
       enableUserPrompt = true;
@@ -466,10 +482,10 @@ async function runInit(flags = {}) {
       enablePreCompact = true;
       enableSessionStart = false; // identity not enabled in -y mode
     } else {
-      console.log("\nClaude Code hooks (automate recall + distillation):");
+      console.log("\nAgent hooks (automate recall + distillation):");
       enableUserPrompt = await askYesNo(
         rl,
-        "  UserPromptSubmit — recall on every message?",
+        "  Prompt recall — recall on every message?",
         true,
       );
       enableStop = await askYesNo(rl, "  Stop — autonomous recall after responses?", true);
@@ -514,11 +530,12 @@ async function runInit(flags = {}) {
   writeJsonFile(configPath, config);
   created.push(".memento.json");
 
-  // 7. Copy hook scripts + write Claude Code settings — gated on hasClaude
+  // 7. Copy hook scripts — gated on any hook-supporting agent
+  const hasCodex = selectedAgents.includes("codex");
   const anyHookEnabled =
     enableUserPrompt || enableStop || enablePreCompact || enableSessionStart;
 
-  if (hasClaude && anyHookEnabled) {
+  if (hasHookAgent && anyHookEnabled) {
     const pkgScriptsDir = path.resolve(__dirname, "..", "scripts");
     const localScriptsDir = path.join(cwd, ".memento", "scripts");
     if (!fs.existsSync(localScriptsDir))
@@ -532,75 +549,83 @@ async function runInit(flags = {}) {
       enableSessionStart && "memento-sessionstart-identity.sh",
     ].filter(Boolean);
 
+    // Also copy Codex notify script if Codex is selected
+    if (hasCodex) scriptFiles.push("memento-codex-notify.sh");
+
     for (const name of scriptFiles) {
       const src = path.join(pkgScriptsDir, name);
+      if (!fs.existsSync(src)) continue; // skip if script doesn't exist yet
       const dest = path.join(localScriptsDir, name);
       fs.copyFileSync(src, dest);
       fs.chmodSync(dest, 0o755);
     }
     created.push(".memento/scripts/");
 
-    // 8. Write .claude/settings.local.json (hooks)
-    const hooks = {};
-    if (enableUserPrompt) {
-      hooks.UserPromptSubmit = [
-        {
-          hooks: [
-            {
-              type: "command",
-              command: path.join(localScriptsDir, "memento-userprompt-recall.sh"),
-              timeout: 5000,
-            },
-          ],
-        },
-      ];
-    }
-    if (enableStop) {
-      hooks.Stop = [
-        {
-          hooks: [
-            {
-              type: "command",
-              command: path.join(localScriptsDir, "memento-stop-recall.sh"),
-              timeout: 5000,
-            },
-          ],
-        },
-      ];
-    }
-    if (enablePreCompact) {
-      hooks.PreCompact = [
-        {
-          hooks: [
-            {
-              type: "command",
-              command: path.join(localScriptsDir, "memento-precompact-distill.sh"),
-              timeout: 30000,
-            },
-          ],
-        },
-      ];
-    }
-    if (enableSessionStart) {
-      hooks.SessionStart = [
-        {
-          hooks: [
-            {
-              type: "command",
-              command: path.join(
-                localScriptsDir,
-                "memento-sessionstart-identity.sh",
-              ),
-              timeout: 10000,
-            },
-          ],
-        },
-      ];
+    // 7b. Write .memento/version for update checks
+    const pkgJsonPath = path.resolve(__dirname, "..", "package.json");
+    const pkgVersion = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8")).version;
+    const versionPath = path.join(cwd, ".memento", "version");
+    fs.writeFileSync(versionPath, pkgVersion + "\n");
+
+    // Hook script commands (absolute paths)
+    const recallCmd = path.join(localScriptsDir, "memento-userprompt-recall.sh");
+    const stopCmd = path.join(localScriptsDir, "memento-stop-recall.sh");
+    const precompactCmd = path.join(localScriptsDir, "memento-precompact-distill.sh");
+    const sessionStartCmd = path.join(localScriptsDir, "memento-sessionstart-identity.sh");
+
+    // 8a. Claude Code hooks — .claude/settings.local.json
+    if (hasClaude) {
+      const settingsPath = path.join(cwd, ".claude", "settings.local.json");
+      const settings = readJsonFile(settingsPath) || {};
+      let changed = false;
+      if (enableUserPrompt) changed = ensureHook(settings, "UserPromptSubmit", recallCmd, 5000) || changed;
+      if (enableStop) changed = ensureHook(settings, "Stop", stopCmd, 5000) || changed;
+      if (enablePreCompact) changed = ensureHook(settings, "PreCompact", precompactCmd, 30000) || changed;
+      if (enableSessionStart) changed = ensureHook(settings, "SessionStart", sessionStartCmd, 10000) || changed;
+      if (changed) {
+        writeJsonFile(settingsPath, settings);
+        created.push(".claude/settings.local.json");
+      }
     }
 
-    const settingsPath = path.join(cwd, ".claude", "settings.local.json");
-    mergeJsonFile(settingsPath, { hooks });
-    created.push(".claude/settings.local.json");
+    // 8b. Gemini CLI hooks — .gemini/settings.json
+    if (hasGemini) {
+      const settingsPath = path.join(cwd, ".gemini", "settings.json");
+      const settings = readJsonFile(settingsPath) || {};
+      let changed = false;
+      if (enableUserPrompt) changed = ensureHook(settings, "BeforeAgent", recallCmd, 5000) || changed;
+      if (enableStop) changed = ensureHook(settings, "SessionEnd", stopCmd, 5000) || changed;
+      if (enablePreCompact) changed = ensureHook(settings, "PreCompress", precompactCmd, 30000) || changed;
+      if (enableSessionStart) changed = ensureHook(settings, "SessionStart", sessionStartCmd, 10000) || changed;
+      if (changed) {
+        writeJsonFile(settingsPath, settings);
+        created.push(".gemini/settings.json (hooks)");
+      }
+    }
+  }
+
+  // 8c. Codex CLI notify — .codex/config.toml (fire-and-forget, post-turn memory storage)
+  if (hasCodex) {
+    const pkgScriptsDir = path.resolve(__dirname, "..", "scripts");
+    const localScriptsDir = path.join(cwd, ".memento", "scripts");
+    // Ensure the notify script is copied (may not have been copied above if no hook agent)
+    const notifySrc = path.join(pkgScriptsDir, "memento-codex-notify.sh");
+    const notifyDest = path.join(localScriptsDir, "memento-codex-notify.sh");
+    if (fs.existsSync(notifySrc) && !fs.existsSync(notifyDest)) {
+      fs.mkdirSync(localScriptsDir, { recursive: true });
+      fs.copyFileSync(notifySrc, notifyDest);
+      fs.chmodSync(notifyDest, 0o755);
+    }
+    const notifyScript = notifyDest;
+    const codexTomlPath = path.join(cwd, ".codex", "config.toml");
+    let tomlContent = "";
+    try { tomlContent = fs.readFileSync(codexTomlPath, "utf-8"); } catch { /* doesn't exist yet */ }
+    if (!tomlContent.includes("notify")) {
+      const notifyLine = `\nnotify = ["bash", "${notifyScript}"]\n`;
+      const separator = tomlContent && !tomlContent.endsWith("\n") ? "\n" : "";
+      fs.writeFileSync(codexTomlPath, tomlContent + separator + notifyLine);
+      created.push(".codex/config.toml (notify)");
+    }
   }
 
   // 9. Per-agent config files
@@ -668,12 +693,13 @@ async function runInit(flags = {}) {
     // Interactive: ask with explicit command shown
     if (cmdParts) {
       const [cmd, ...args] = cmdParts;
-      const displayCmd = `${cmd} ${args[0]}${args.length > 1 ? " ..." : ""}`;
+      const flagArgs = args.slice(0, -1).join(" ");
+      const displayCmd = `${cmd} ${flagArgs} <prompt>`;
       const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
       console.log("─".repeat(60));
       const integrate = await askYesNo(
         rl2,
-        `\n  Auto-integrate instructions into your project?\n  This will run: ${displayCmd}\n\n  Proceed?`,
+        `\n  Auto-integrate instructions into your project?\n  This will run: ${displayCmd}\n\n  ⚠  This uses --dangerously-skip-permissions so the agent can\n  write to CLAUDE.md without prompting. If you prefer, decline\n  and we'll print the instructions for you to add manually.\n\n  Proceed?`,
         true,
       );
       rl2.close();
@@ -694,6 +720,113 @@ async function runInit(flags = {}) {
       printInstructionsFallback(selectedAgents);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Update command — copy fresh hook scripts to an existing installation
+// ---------------------------------------------------------------------------
+
+async function runUpdate() {
+  const cwd = process.cwd();
+  const configPath = path.join(cwd, ".memento.json");
+
+  if (!fs.existsSync(configPath)) {
+    console.error(
+      "  Error: .memento.json not found in current directory.\n" +
+        "  Run `npx memento-mcp init` first to set up Memento.\n"
+    );
+    process.exit(1);
+  }
+
+  const pkgJsonPath = path.resolve(__dirname, "..", "package.json");
+  const pkgVersion = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8")).version;
+
+  const pkgScriptsDir = path.resolve(__dirname, "..", "scripts");
+  const localScriptsDir = path.join(cwd, ".memento", "scripts");
+
+  if (!fs.existsSync(localScriptsDir)) {
+    fs.mkdirSync(localScriptsDir, { recursive: true });
+  }
+
+  // Copy all .sh files from package scripts/ to local .memento/scripts/
+  const scriptFiles = fs
+    .readdirSync(pkgScriptsDir)
+    .filter((f) => f.endsWith(".sh"));
+
+  const updated = [];
+  for (const name of scriptFiles) {
+    const src = path.join(pkgScriptsDir, name);
+    const dest = path.join(localScriptsDir, name);
+    fs.copyFileSync(src, dest);
+    fs.chmodSync(dest, 0o755);
+    updated.push(name);
+  }
+
+  // Write .memento/version
+  const versionPath = path.join(cwd, ".memento", "version");
+  fs.writeFileSync(versionPath, pkgVersion + "\n");
+
+  // Ensure SessionStart hook is registered for agents that support hooks
+  // Detect by config agents field or directory presence (older configs may lack agents)
+  const config = readJsonFile(configPath) || {};
+  const agents = config.agents || [];
+  const sessionStartCmd = path.join(localScriptsDir, "memento-sessionstart-identity.sh");
+  const registeredHooks = [];
+
+  // Claude Code
+  const hasClaude = agents.includes("claude-code")
+    || fs.existsSync(path.join(cwd, ".claude"));
+  if (hasClaude) {
+    const settingsPath = path.join(cwd, ".claude", "settings.local.json");
+    const settings = readJsonFile(settingsPath) || {};
+    if (ensureHook(settings, "SessionStart", sessionStartCmd, 10000)) {
+      writeJsonFile(settingsPath, settings);
+      registeredHooks.push("Claude Code → .claude/settings.local.json");
+    }
+  }
+
+  // Gemini CLI
+  const hasGemini = agents.includes("gemini")
+    || fs.existsSync(path.join(cwd, ".gemini"));
+  if (hasGemini) {
+    const settingsPath = path.join(cwd, ".gemini", "settings.json");
+    const settings = readJsonFile(settingsPath) || {};
+    if (ensureHook(settings, "SessionStart", sessionStartCmd, 10000)) {
+      writeJsonFile(settingsPath, settings);
+      registeredHooks.push("Gemini CLI → .gemini/settings.json");
+    }
+  }
+
+  // Codex CLI — ensure notify is configured
+  const hasCodex = agents.includes("codex")
+    || fs.existsSync(path.join(cwd, ".codex"));
+  if (hasCodex) {
+    const notifyScript = path.join(localScriptsDir, "memento-codex-notify.sh");
+    const codexTomlPath = path.join(cwd, ".codex", "config.toml");
+    let tomlContent = "";
+    try { tomlContent = fs.readFileSync(codexTomlPath, "utf-8"); } catch { /* doesn't exist yet */ }
+    if (!tomlContent.includes("notify") && fs.existsSync(notifyScript)) {
+      const notifyLine = `\nnotify = ["bash", "${notifyScript}"]\n`;
+      const separator = tomlContent && !tomlContent.endsWith("\n") ? "\n" : "";
+      fs.mkdirSync(path.dirname(codexTomlPath), { recursive: true });
+      fs.writeFileSync(codexTomlPath, tomlContent + separator + notifyLine);
+      registeredHooks.push("Codex CLI → .codex/config.toml (notify)");
+    }
+  }
+
+  console.log(`\n  ✓ Memento hooks updated to v${pkgVersion}\n`);
+  console.log("  Updated scripts:");
+  for (const name of updated) {
+    console.log(`    ${name}`);
+  }
+  if (registeredHooks.length > 0) {
+    console.log("\n  Registered hooks:");
+    for (const hook of registeredHooks) {
+      console.log(`    ${hook}`);
+    }
+  }
+  console.log(`\n  Version written to .memento/version`);
+  console.log("  Restart your agent session to pick up changes.\n");
 }
 
 function printInstructionsFallback(selectedAgents) {
@@ -733,6 +866,11 @@ if (isMain) {
       console.error(err);
       process.exit(1);
     });
+  } else if (args[0] === "update") {
+    runUpdate().catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
   } else if (args.length === 0) {
     // No args — start the MCP server (this is what .mcp.json invokes)
     // Must call main() explicitly because the isMainModule guard in index.js
@@ -747,6 +885,7 @@ if (isMain) {
     npx memento-mcp init                Set up Memento in the current project
     npx memento-mcp init -y             Non-interactive setup (uses defaults)
     npx memento-mcp init --api-key KEY  Provide API key (skips signup)
+    npx memento-mcp update              Update hook scripts to latest version
     npx memento-mcp                     Start the MCP server (used by .mcp.json)
 
   The -y flag enables fully non-interactive setup for CI/scripting.

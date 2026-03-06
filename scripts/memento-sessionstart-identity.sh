@@ -99,9 +99,33 @@ PID3=$!
 
 wait $PID1 $PID2 $PID3 2>/dev/null
 
-# Build output from the three responses
+# Version check (non-blocking, best-effort)
+# Read installed version from .memento/version (written by init/update)
+VERSION_FILE=""
+_vd="$(pwd)"
+while true; do
+    if [ -f "$_vd/.memento/version" ]; then
+        VERSION_FILE="$_vd/.memento/version"
+        break
+    fi
+    _vp="$(dirname "$_vd")"
+    [ "$_vp" = "$_vd" ] && break
+    _vd="$_vp"
+done
+
+export LOCAL_VERSION=""
+export LATEST_VERSION=""
+if [ -n "$VERSION_FILE" ]; then
+    LOCAL_VERSION=$(cat "$VERSION_FILE" 2>/dev/null | tr -d '[:space:]')
+    if [ -n "$LOCAL_VERSION" ]; then
+        LATEST_VERSION=$(curl -s --max-time 2 "https://registry.npmjs.org/memento-mcp/latest" 2>/dev/null \
+            | python3 -c "import json,sys; print(json.load(sys.stdin).get('version',''))" 2>/dev/null || echo "")
+    fi
+fi
+
+# Build output from the three responses + version check
 python3 -c "
-import json, sys
+import json, sys, os
 
 sections = []
 
@@ -155,6 +179,12 @@ if not sections:
 context = '\n\n'.join(sections)
 context += '\n\nREMINDER: If Memento MCP tools are not loaded, run: ToolSearch query=\"+memento\" max_results=20'
 
+# 4. Version check — append update notice if newer version available
+local_ver = os.environ.get('LOCAL_VERSION', '').strip()
+latest_ver = os.environ.get('LATEST_VERSION', '').strip()
+if local_ver and latest_ver and local_ver != latest_ver:
+    context += f'\n\nMemento update available: v{local_ver} → v{latest_ver}. Run: npx memento-mcp update'
+
 print(json.dumps({
     'hookSpecificOutput': {
         'hookEventName': 'SessionStart',
@@ -163,7 +193,11 @@ print(json.dumps({
 }))
 " "$IDENTITY_TMP" "$ACTIVE_TMP" "$SKIP_TMP" 2>/dev/null
 
-# Toast: done
-"$TOAST" memento "✓ Identity loaded" &>/dev/null
+# Toast: done (with update notice if applicable)
+if [ -n "$LATEST_VERSION" ] && [ -n "$LOCAL_VERSION" ] && [ "$LATEST_VERSION" != "$LOCAL_VERSION" ]; then
+    "$TOAST" memento "⬆ Memento v${LATEST_VERSION} available" &>/dev/null
+else
+    "$TOAST" memento "✓ Identity loaded" &>/dev/null
+fi
 
 exit 0

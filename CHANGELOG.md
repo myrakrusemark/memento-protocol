@@ -15,6 +15,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 ### Changed
 - `source:distill` tag renamed to `source:distill:llama-3.1-8b` to encode model provenance. The `claude-code` path tags memories `source:distill:claude-code`.
 
+### Removed
+- **Passive memory extraction (auto_extract)** — removed conversation buffer, auto-extraction from `/v1/context`, and buffer fallback from `/v1/extract`. Smart models know when to store via `memento_store`; passive extraction produced noisy, low-signal memories. The `memento_extract` tool and `/v1/extract` route still work with explicit transcripts. The `conversation_buffer` table is no longer created for new workspaces.
+
 ---
 
 ## [0.2.3] - 2026-02-24
