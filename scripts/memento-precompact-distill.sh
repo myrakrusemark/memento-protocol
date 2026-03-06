@@ -73,7 +73,7 @@ if [ -f "$SCRIPT_DIR/../.env" ]; then
 fi
 
 MEMENTO_API="${MEMENTO_API_URL:-https://memento-api.myrakrusemark.workers.dev}"
-MEMENTO_KEY="${MEMENTO_API_KEY:?MEMENTO_API_KEY not set — check memento-protocol/.env or .memento.json}"
+MEMENTO_KEY="${MEMENTO_API_KEY:?MEMENTO_API_KEY not set — check memento-mcp/.env or .memento.json}"
 MEMENTO_WS="${MEMENTO_WORKSPACE:-default}"
 
 # Parse transcript to readable text (use fathom's parser if available, else raw)
