@@ -204,6 +204,14 @@ CREATE TABLE IF NOT EXISTS working_memory_items (
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS activity_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action TEXT NOT NULL,
+  memory_id TEXT,
+  detail TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
 `;
 
 /**

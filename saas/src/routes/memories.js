@@ -154,6 +154,12 @@ memories.post("/", async (c) => {
   // Fire-and-forget embedding (uses plaintext for vector indexing)
   embedAndStore(c.env, c.get("workspaceName"), id, content).catch(() => {});
 
+  // Fire-and-forget activity log
+  db.execute({
+    sql: `INSERT INTO activity_log (action, memory_id, detail) VALUES (?, ?, ?)`,
+    args: ["create", id, type],
+  }).catch(() => {});
+
   const tagList = body.tags && body.tags.length ? ` [${body.tags.join(", ")}]` : "";
   const imgStr = imagesMeta.length ? ` (${imagesMeta.length} image${imagesMeta.length === 1 ? "" : "s"})` : "";
 
@@ -522,6 +528,12 @@ memories.post("/ingest", async (c) => {
     ids.push(id);
   }
 
+  // Fire-and-forget activity log
+  db.execute({
+    sql: `INSERT INTO activity_log (action, detail) VALUES (?, ?)`,
+    args: ["ingest", `${ids.length} memories from ${source}`],
+  }).catch(() => {});
+
   return c.json(
     { ingested: ids.length, ids, source },
     201
@@ -636,6 +648,12 @@ memories.put("/:id", async (c) => {
     args,
   });
 
+  // Fire-and-forget activity log
+  db.execute({
+    sql: `INSERT INTO activity_log (action, memory_id, detail) VALUES (?, ?, ?)`,
+    args: ["update", memoryId, Object.keys(body).join(",")],
+  }).catch(() => {});
+
   // Return updated (decrypted)
   const result = await db.execute({
     sql: `SELECT id, content, type, tags, created_at, expires_at, relevance,
@@ -692,6 +710,12 @@ memories.delete("/:id", async (c) => {
 
   // Clean up vector index (fire-and-forget)
   removeVector(c.env, c.get("workspaceName"), memoryId).catch(() => {});
+
+  // Fire-and-forget activity log
+  db.execute({
+    sql: `INSERT INTO activity_log (action, memory_id) VALUES (?, ?)`,
+    args: ["delete", memoryId],
+  }).catch(() => {});
 
   return c.json({
     content: [{ type: "text", text: `Memory ${memoryId} deleted.` }],

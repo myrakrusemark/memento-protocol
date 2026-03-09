@@ -169,6 +169,13 @@ consolidation.post("/group", async (c) => {
   }
 
   const foundIds = memories.map((m) => m.id);
+
+  // Fire-and-forget activity log
+  db.execute({
+    sql: `INSERT INTO activity_log (action, memory_id, detail) VALUES (?, ?, ?)`,
+    args: ["consolidate", newId, foundIds.join(",")],
+  }).catch(() => {});
+
   return c.json({
     content: [{
       type: "text",

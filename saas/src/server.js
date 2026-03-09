@@ -28,6 +28,7 @@ import distill from "./routes/distill.js";
 import extract from "./routes/extract.js";
 import images from "./routes/images.js";
 import settings from "./routes/settings.js";
+import activity from "./routes/activity.js";
 import { registerAuthRoutes, registerAuthenticatedRoutes } from "./routes/auth.js";
 import { registerBillingPublicRoutes, billingAuthenticated } from "./routes/billing.js";
 import stripeWebhook from "./routes/stripe-webhook.js";
@@ -90,6 +91,7 @@ export function createApp() {
   v1.route("/extract", extract);
   v1.route("/images", images);
   v1.route("/settings", settings);
+  v1.route("/activity", activity);
   v1.route("/billing", billingAuthenticated);
   registerAuthenticatedRoutes(v1);
 
