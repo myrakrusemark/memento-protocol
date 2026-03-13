@@ -3,6 +3,8 @@
 # JSON output: systemMessage (user sees count) + additionalContext (model sees details).
 #
 # Calls /v1/context endpoint for memories + skip list matches.
+# Supports image search: detects pasted images (Claude Code image cache) and
+# file paths in the message, downscales to 224x224, sends to /v1/context.
 
 set -o pipefail
 
@@ -60,6 +62,8 @@ MEMENTO_WS="${MEMENTO_WORKSPACE:-default}"
 
 INPUT=$(cat)
 USER_MESSAGE=$(echo "$INPUT" | jq -r '.prompt // empty' 2>/dev/null)
+TRANSCRIPT_PATH=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
+SESSION_ID=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
 
 if [ -z "$USER_MESSAGE" ] || [ ${#USER_MESSAGE} -lt 10 ]; then
     exit 0
@@ -67,8 +71,118 @@ fi
 
 QUERY="${USER_MESSAGE:0:500}"
 
+# --- Image detection ---
+# Collect up to 3 images from two sources:
+#   1. Claude Code image cache (pasted/dropped images, detected via marker file)
+#   2. File paths mentioned in the message text
+IMAGE_PATHS=()
+
+# Prong 1: Claude Code image cache — pasted images cached in ~/.claude/image-cache/{conversation_id}/
+# The conversation UUID comes from transcript_path (basename minus .jsonl), NOT session_id.
+CONV_ID=""
+if [ -n "$TRANSCRIPT_PATH" ]; then
+    CONV_ID=$(basename "$TRANSCRIPT_PATH" .jsonl)
+fi
+
+# Try conversation ID first, fall back to session_id
+IMAGE_CACHE=""
+if [ -n "$CONV_ID" ] && [ -d "$HOME/.claude/image-cache/$CONV_ID" ]; then
+    IMAGE_CACHE="$HOME/.claude/image-cache/$CONV_ID"
+elif [ -n "$SESSION_ID" ] && [ -d "$HOME/.claude/image-cache/$SESSION_ID" ]; then
+    IMAGE_CACHE="$HOME/.claude/image-cache/$SESSION_ID"
+fi
+
+if [ -n "$IMAGE_CACHE" ]; then
+    # Track seen images via marker file to detect newly pasted ones.
+    # Each image is numbered sequentially (1.png, 2.png, ...).
+    MARKER="/tmp/memento-img-seen-$(echo "$IMAGE_CACHE" | md5sum | cut -c1-16)"
+    LAST_SEEN=0
+    if [ -f "$MARKER" ]; then
+        LAST_SEEN=$(cat "$MARKER" 2>/dev/null || echo 0)
+    fi
+
+    CURRENT_COUNT=$(ls "$IMAGE_CACHE"/*.png 2>/dev/null | wc -l)
+
+    if [ "$CURRENT_COUNT" -gt "$LAST_SEEN" ]; then
+        # New images detected — grab the ones we haven't seen
+        for i in $(seq $((LAST_SEEN + 1)) "$CURRENT_COUNT"); do
+            if [ -f "$IMAGE_CACHE/$i.png" ] && [ ${#IMAGE_PATHS[@]} -lt 3 ]; then
+                IMAGE_PATHS+=("$IMAGE_CACHE/$i.png")
+            fi
+        done
+    fi
+
+    # Update marker to current count
+    echo "$CURRENT_COUNT" > "$MARKER"
+fi
+
+# Prong 2: File paths in message text (explicit image references)
+if [ ${#IMAGE_PATHS[@]} -lt 3 ]; then
+    REMAINING_SLOTS=$(( 3 - ${#IMAGE_PATHS[@]} ))
+    while IFS= read -r img; do
+        if [ -f "$img" ]; then
+            IMAGE_PATHS+=("$img")
+        fi
+    done < <(echo "$USER_MESSAGE" | grep -oE '(/[^ ]+\.(jpg|jpeg|png|gif|webp))' | head -"$REMAINING_SLOTS")
+fi
+
+# Build images JSON array (base64-encoded, downscaled to 224x224)
+IMAGES_JSON=""
+if [ ${#IMAGE_PATHS[@]} -gt 0 ] && command -v convert &>/dev/null; then
+    IMAGES_JSON=$(python3 -c "
+import subprocess, base64, json, sys, os
+
+paths = sys.argv[1:]
+images = []
+for p in paths:
+    if not os.path.isfile(p):
+        continue
+    ext = os.path.splitext(p)[1].lower()
+    mime_map = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp'}
+    mimetype = mime_map.get(ext, 'image/jpeg')
+    try:
+        result = subprocess.run(
+            ['convert', p, '-resize', '224x224^', '-gravity', 'center', '-extent', '224x224', '-quality', '80', 'jpeg:-'],
+            capture_output=True, timeout=5
+        )
+        if result.returncode == 0 and len(result.stdout) > 0:
+            b64 = base64.b64encode(result.stdout).decode()
+            images.append({'data': b64, 'mimetype': 'image/jpeg'})
+    except Exception:
+        pass
+
+if images:
+    print(json.dumps(images))
+else:
+    print('')
+" "${IMAGE_PATHS[@]}" 2>/dev/null)
+fi
+
 # Toast: start retrieving
 "$TOAST" memento "⏳ Retrieving memories..." &>/dev/null
+
+# Build request body with optional images
+REQUEST_BODY=$(python3 -c "
+import json, sys
+
+message = sys.argv[1]
+images_json = sys.argv[2] if len(sys.argv) > 2 else ''
+
+body = {
+    'message': message,
+    'include': ['memories', 'skip_list']
+}
+
+if images_json:
+    try:
+        images = json.loads(images_json)
+        if images:
+            body['images'] = images
+    except Exception:
+        pass
+
+print(json.dumps(body))
+" "$QUERY" "$IMAGES_JSON")
 
 # Call Memento SaaS /v1/context
 SAAS_OUTPUT=$(curl -s --max-time 8 \
@@ -76,7 +190,7 @@ SAAS_OUTPUT=$(curl -s --max-time 8 \
     -H "Authorization: Bearer $MEMENTO_KEY" \
     -H "X-Memento-Workspace: $MEMENTO_WS" \
     -H "Content-Type: application/json" \
-    -d "{\"message\": $(echo "$QUERY" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'), \"include\": [\"memories\", \"skip_list\"]}" \
+    -d "$REQUEST_BODY" \
     "$MEMENTO_API/v1/context" 2>/dev/null \
 | python3 -c "
 import json, sys

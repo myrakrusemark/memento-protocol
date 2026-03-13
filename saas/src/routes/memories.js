@@ -4,6 +4,7 @@
  * POST   /v1/memories              — Store a new memory
  * GET    /v1/memories              — List/browse all memories
  * GET    /v1/memories/recall       — Search memories by query, tags, type
+ * POST   /v1/memories/recall       — Search memories by query, tags, type, and/or images
  * POST   /v1/memories/ingest       — Bulk store memories (pre-compact)
  * GET    /v1/memories/:id/graph    — Full subgraph traversal via BFS
  * GET    /v1/memories/:id/related  — Direct connections only
@@ -14,11 +15,12 @@
 
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
-import { scoreAndRankMemories, shouldAbstain } from "../services/scoring.js";
-import { embedAndStore, embedImageAndStore, removeVector, removeImageVectors } from "../services/embeddings.js";
+import { scoreAndRankMemories, shouldAbstain, hybridRank } from "../services/scoring.js";
+import { embedAndStore, embedImageAndStore, removeVector, removeImageVectors, semanticMultiSearch } from "../services/embeddings.js";
 import { traverseGraph, getRelated } from "../services/graph.js";
 import { getLimits } from "../config/plans.js";
 import { encryptField, decryptField } from "../services/crypto.js";
+import { validateSearchImages } from "../services/image-validation.js";
 
 const MAX_IMAGES_PER_MEMORY = 5;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10MB decoded
@@ -474,6 +476,199 @@ memories.get("/recall", async (c) => {
 
   return c.json({
     content: [{ type: "text", text: summaryText }],
+  });
+});
+
+// POST /v1/memories/recall — Search memories with image support
+memories.post("/recall", async (c) => {
+  const db = c.get("workspaceDb");
+  const body = await c.req.json();
+
+  const query = body.query || "";
+  const tags = body.tags || null;
+  const typeParam = body.type || null;
+  const limitParam = Math.max(1, Math.min(100, body.limit || 10));
+  const trackAccess = body.track_access !== false;
+  const now = new Date().toISOString();
+
+  // At least one of query or images is required
+  const hasImages = Array.isArray(body.images) && body.images.length > 0;
+  if (!query && !hasImages) {
+    return c.json(
+      { content: [{ type: "text", text: 'At least one of "query" or "images" is required.' }] },
+      400
+    );
+  }
+
+  // Validate images if provided
+  let decodedImages = [];
+  if (hasImages) {
+    const validation = validateSearchImages(body.images);
+    if (validation.error) {
+      return c.json({ content: [{ type: "text", text: validation.error }] }, 400);
+    }
+    decodedImages = validation.decoded;
+  }
+
+  const encKey = c.get("encryptionKey");
+  const workspaceName = c.get("workspaceName");
+
+  // Keyword scoring (only if text query provided)
+  let keywordResults = [];
+  if (query) {
+    const result = await db.execute({
+      sql: `SELECT id, content, type, tags, created_at, expires_at,
+                   access_count, last_accessed_at, linkages, images
+            FROM memories
+            WHERE consolidated = 0
+              AND (expires_at IS NULL OR expires_at > ?)
+            ORDER BY created_at DESC`,
+      args: [now],
+    });
+
+    const candidates = [];
+    for (const row of result.rows) {
+      if (typeParam && row.type !== typeParam) continue;
+      if (tags && tags.length > 0) {
+        let memTags;
+        try { memTags = JSON.parse(row.tags || "[]").map((t) => t.toLowerCase()); } catch { memTags = []; }
+        if (!tags.some((t) => memTags.includes(t.toLowerCase()))) continue;
+      }
+      if (encKey) row.content = await decryptField(row.content, encKey);
+      candidates.push(row);
+    }
+
+    if (!shouldAbstain(candidates, query)) {
+      keywordResults = scoreAndRankMemories(candidates, query, new Date(), limitParam);
+    }
+
+    // Apply recall_threshold
+    const thresholdResult = await db.execute({
+      sql: "SELECT value FROM workspace_settings WHERE key = 'recall_threshold'",
+      args: [],
+    });
+    const threshold = parseFloat(thresholdResult.rows[0]?.value ?? "0") || 0;
+    if (threshold > 0) {
+      keywordResults = keywordResults.filter((r) => r.score >= threshold);
+    }
+  }
+
+  // Semantic search (text + images in parallel)
+  const vectorResults = await semanticMultiSearch(
+    c.env, workspaceName,
+    { text: query || undefined, images: decodedImages.length > 0 ? decodedImages : undefined },
+    10
+  );
+
+  let topResults;
+  if (vectorResults.length > 0 && keywordResults.length > 0) {
+    // Hybrid: keyword + vector
+    let alpha = 0.5;
+    try {
+      const alphaResult = await db.execute({
+        sql: "SELECT value FROM workspace_settings WHERE key = 'recall_alpha'",
+        args: [],
+      });
+      if (alphaResult.rows.length > 0) {
+        const parsed = parseFloat(alphaResult.rows[0].value);
+        if (!isNaN(parsed) && parsed >= 0 && parsed <= 1) alpha = parsed;
+      }
+    } catch { /* use default */ }
+
+    const hybridResults = hybridRank(keywordResults, vectorResults, alpha, limitParam);
+
+    // Fetch memory objects for vector-only results
+    for (const hr of hybridResults) {
+      if (!hr.memory && hr.memoryId) {
+        const memRow = await db.execute({
+          sql: `SELECT id, content, type, tags, created_at, expires_at,
+                       access_count, last_accessed_at, linkages, images
+                FROM memories WHERE id = ? AND consolidated = 0`,
+          args: [hr.memoryId],
+        });
+        if (memRow.rows.length > 0) {
+          const mem = memRow.rows[0];
+          if (encKey) mem.content = await decryptField(mem.content, encKey);
+          hr.memory = mem;
+        }
+      }
+    }
+
+    topResults = hybridResults
+      .filter((hr) => hr.memory)
+      .map((hr) => ({ memory: hr.memory, score: hr.score }));
+  } else if (vectorResults.length > 0) {
+    // Image-only (no text): vector results are sole signal
+    topResults = [];
+    for (const vr of vectorResults.slice(0, limitParam)) {
+      const memRow = await db.execute({
+        sql: `SELECT id, content, type, tags, created_at, expires_at,
+                     access_count, last_accessed_at, linkages, images
+              FROM memories WHERE id = ? AND consolidated = 0`,
+        args: [vr.id],
+      });
+      if (memRow.rows.length > 0) {
+        const mem = memRow.rows[0];
+        if (encKey) mem.content = await decryptField(mem.content, encKey);
+        topResults.push({ memory: mem, score: vr.score });
+      }
+    }
+  } else {
+    // Pure keyword (no vector results)
+    topResults = keywordResults;
+  }
+
+  if (topResults.length === 0) {
+    const queryDesc = query ? `"${query}"` : "provided image(s)";
+    return c.json({
+      text: `No memories found matching ${queryDesc}.`,
+      memories: [],
+    });
+  }
+
+  // Log access (fire-and-forget)
+  if (trackAccess) {
+    for (const r of topResults) {
+      db.execute({
+        sql: "INSERT INTO access_log (memory_id, query) VALUES (?, ?)",
+        args: [r.memory.id, (query || "image-search").slice(0, 200)],
+      }).catch(() => {});
+      db.execute({
+        sql: "UPDATE memories SET access_count = access_count + 1, last_accessed_at = datetime('now') WHERE id = ?",
+        args: [r.memory.id],
+      }).catch(() => {});
+    }
+  }
+
+  // Format response (same as GET /recall with format=json)
+  const formatted = topResults
+    .map((r) => {
+      const m = r.memory;
+      let memTags;
+      try { memTags = JSON.parse(m.tags || "[]"); } catch { memTags = []; }
+      const tagStr = memTags.length ? ` [${memTags.join(", ")}]` : "";
+      const expStr = m.expires_at ? ` (expires: ${m.expires_at})` : "";
+      const memImages = safeParseJson(m.images, []);
+      const imgStr = memImages.length
+        ? `\n📷 ${memImages.length} image${memImages.length === 1 ? "" : "s"} → memento_view_image("${m.id}")`
+        : "";
+      return `**${m.id}** (${m.type})${tagStr}${expStr}\n${m.content}${imgStr}`;
+    })
+    .join("\n\n---\n\n");
+
+  const summaryText = `Found ${topResults.length} memor${topResults.length === 1 ? "y" : "ies"}:\n\n${formatted}`;
+
+  return c.json({
+    text: summaryText,
+    memories: topResults.map((r) => ({
+      id: r.memory.id,
+      content: r.memory.content,
+      type: r.memory.type,
+      tags: safeParseTags(r.memory.tags),
+      images: safeParseJson(r.memory.images, []),
+      created_at: r.memory.created_at,
+      relevance_score: r.score,
+    })),
   });
 });
 

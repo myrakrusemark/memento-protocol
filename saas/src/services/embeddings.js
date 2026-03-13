@@ -85,19 +85,17 @@ export async function embedQuery(env, text) {
 export async function embedImage(env, imageBytes) {
   if (!env?.NOMIC_API_KEY) return null;
 
-  const base64 = btoa(String.fromCharCode(...imageBytes));
-  const dataUri = `data:image/jpeg;base64,${base64}`;
+  // Nomic vision API requires multipart/form-data with file uploads
+  const formData = new FormData();
+  formData.append("model", NOMIC_IMAGE_MODEL);
+  formData.append("images", new Blob([imageBytes], { type: "image/jpeg" }), "image.jpg");
 
   const response = await fetch(NOMIC_IMAGE_URL, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${env.NOMIC_API_KEY}`,
-      "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model: NOMIC_IMAGE_MODEL,
-      images: [dataUri],
-    }),
+    body: formData,
   });
 
   if (!response.ok) return null;
@@ -172,6 +170,28 @@ export async function embedImageAndStore(env, workspaceId, memoryId, imageBytes,
  * @param {number} [topK=10] - Maximum results to return
  * @returns {Promise<Array<{id: string, score: number}>>} Matching memory IDs with scores
  */
+/**
+ * Deduplicate Vectorize matches by memory_id, keeping highest score per memory.
+ * @param {Array} matches - Raw Vectorize match results
+ * @returns {Array<{id: string, score: number, matched_image: boolean}>}
+ */
+function deduplicateVectorResults(matches) {
+  const bestByMemory = new Map();
+  for (const match of matches) {
+    const memoryId = match.metadata?.memory_id || match.id.split(":")[1];
+    const isImage = match.metadata?.type === "image";
+    const existing = bestByMemory.get(memoryId);
+    if (!existing || match.score > existing.score) {
+      bestByMemory.set(memoryId, {
+        id: memoryId,
+        score: match.score,
+        matched_image: isImage,
+      });
+    }
+  }
+  return Array.from(bestByMemory.values());
+}
+
 export async function semanticSearch(env, workspaceId, query, topK = 10) {
   if (!env?.NOMIC_API_KEY || !env?.VECTORIZE) return [];
 
@@ -190,20 +210,74 @@ export async function semanticSearch(env, workspaceId, query, topK = 10) {
   }
 
   if (!results?.matches) return [];
+  return deduplicateVectorResults(results.matches);
+}
 
-  // Deduplicate by memory_id — a memory may match via both text and image vectors.
-  // Keep the highest-scoring match per memory.
+/**
+ * Search the Vectorize index using an image embedding.
+ *
+ * @param {object} env - Workers environment bindings
+ * @param {string} workspaceId - Workspace identifier to filter by
+ * @param {Uint8Array} imageBytes - Raw image bytes
+ * @param {number} [topK=10] - Maximum results to return
+ * @returns {Promise<Array<{id: string, score: number, matched_image: boolean}>>}
+ */
+export async function semanticImageSearch(env, workspaceId, imageBytes, topK = 10) {
+  if (!env?.NOMIC_API_KEY || !env?.VECTORIZE) return [];
+
+  const embedding = await embedImage(env, imageBytes);
+  if (!embedding) return [];
+
+  let results;
+  try {
+    results = await env.VECTORIZE.query(Array.from(embedding), {
+      topK,
+      filter: { workspace_id: workspaceId },
+      returnMetadata: true,
+    });
+  } catch {
+    return [];
+  }
+
+  if (!results?.matches) return [];
+  return deduplicateVectorResults(results.matches);
+}
+
+/**
+ * Multi-modal semantic search: text and/or images in parallel.
+ * Merges results by memory_id, keeping the highest score from any modality.
+ *
+ * @param {object} env - Workers environment bindings
+ * @param {string} workspaceId - Workspace identifier to filter by
+ * @param {object} queries - { text?: string, images?: Uint8Array[] }
+ * @param {number} [topK=10] - Maximum results per query
+ * @returns {Promise<Array<{id: string, score: number, matched_image: boolean}>>}
+ */
+export async function semanticMultiSearch(env, workspaceId, { text, images }, topK = 10) {
+  const searches = [];
+
+  if (text) {
+    searches.push(semanticSearch(env, workspaceId, text, topK));
+  }
+
+  if (images?.length > 0) {
+    for (const imgBytes of images) {
+      searches.push(semanticImageSearch(env, workspaceId, imgBytes, topK));
+    }
+  }
+
+  if (searches.length === 0) return [];
+
+  const allResults = await Promise.all(searches);
+
+  // Merge by memory_id, keeping highest score
   const bestByMemory = new Map();
-  for (const match of results.matches) {
-    const memoryId = match.metadata?.memory_id || match.id.split(":")[1];
-    const isImage = match.metadata?.type === "image";
-    const existing = bestByMemory.get(memoryId);
-    if (!existing || match.score > existing.score) {
-      bestByMemory.set(memoryId, {
-        id: memoryId,
-        score: match.score,
-        matched_image: isImage,
-      });
+  for (const results of allResults) {
+    for (const r of results) {
+      const existing = bestByMemory.get(r.id);
+      if (!existing || r.score > existing.score) {
+        bestByMemory.set(r.id, r);
+      }
     }
   }
 
@@ -258,12 +332,76 @@ export async function removeImageVectors(env, workspaceId, memoryId, imageCount)
  * @param {number} [batchLimit=100] - Max memories to process per call (to stay within subrequest limits)
  * @returns {Promise<{embedded: number, skipped: number, errors: number, images_embedded: number, images_errors: number, remaining: number}>}
  */
-export async function backfillWorkspace(env, db, workspaceId, encKey = null, batchLimit = 100) {
+export async function backfillWorkspace(env, db, workspaceId, encKey = null, batchLimit = 100, { imagesOnly = false } = {}) {
   if (!env?.NOMIC_API_KEY || !env?.VECTORIZE) {
     return { embedded: 0, skipped: 0, errors: 0, images_embedded: 0, images_errors: 0, remaining: 0 };
   }
 
-  // Only process memories that haven't been embedded yet (or were embedded with old model)
+  let embedded = 0;
+  let skipped = 0;
+  let errors = 0;
+  let images_embedded = 0;
+  let images_errors = 0;
+  let totalRemaining;
+
+  if (imagesOnly) {
+    // Images-only mode: find memories with images but no image_embedded_at
+    const result = await db.execute({
+      sql: `SELECT id, images FROM memories
+            WHERE consolidated = 0 AND images IS NOT NULL AND images != '[]'
+              AND image_embedded_at IS NULL
+            ORDER BY created_at DESC
+            LIMIT ?`,
+      args: [batchLimit],
+    });
+
+    const countResult = await db.execute({
+      sql: `SELECT COUNT(*) as count FROM memories
+            WHERE consolidated = 0 AND images IS NOT NULL AND images != '[]'
+              AND image_embedded_at IS NULL`,
+      args: [],
+    });
+    totalRemaining = countResult.rows[0].count;
+
+    for (const row of result.rows) {
+      let imagesMeta;
+      try {
+        imagesMeta = JSON.parse(row.images || "[]");
+      } catch {
+        imagesMeta = [];
+      }
+
+      let rowEmbedded = 0;
+      if (imagesMeta.length > 0 && env?.IMAGES) {
+        for (let idx = 0; idx < imagesMeta.length; idx++) {
+          try {
+            const obj = await env.IMAGES.get(imagesMeta[idx].key);
+            if (!obj) continue;
+            const imageBytes = new Uint8Array(await obj.arrayBuffer());
+            const success = await embedImageAndStore(env, workspaceId, row.id, imageBytes, idx);
+            if (success) {
+              images_embedded++;
+              rowEmbedded++;
+            }
+          } catch {
+            images_errors++;
+          }
+        }
+
+        if (rowEmbedded > 0) {
+          await db.execute({
+            sql: "UPDATE memories SET image_embedded_at = datetime('now') WHERE id = ?",
+            args: [row.id],
+          }).catch(() => {});
+        }
+      }
+    }
+
+    const remaining = Math.max(0, totalRemaining - result.rows.length);
+    return { embedded: 0, skipped: 0, errors: 0, images_embedded, images_errors, remaining };
+  }
+
+  // Standard mode: process memories that haven't been text-embedded yet
   const result = await db.execute({
     sql: `SELECT id, content, images FROM memories
           WHERE consolidated = 0 AND embedded_at IS NULL
@@ -272,18 +410,11 @@ export async function backfillWorkspace(env, db, workspaceId, encKey = null, bat
     args: [batchLimit],
   });
 
-  // Count remaining for progress tracking
   const countResult = await db.execute({
     sql: `SELECT COUNT(*) as count FROM memories WHERE consolidated = 0 AND embedded_at IS NULL`,
     args: [],
   });
-  const totalRemaining = countResult.rows[0].count;
-
-  let embedded = 0;
-  let skipped = 0;
-  let errors = 0;
-  let images_embedded = 0;
-  let images_errors = 0;
+  totalRemaining = countResult.rows[0].count;
 
   const rows = result.rows;
   const BATCH_SIZE = 50;
@@ -346,7 +477,6 @@ export async function backfillWorkspace(env, db, workspaceId, encKey = null, bat
           }
         }
 
-        // Mark image embedding timestamp
         if (images_embedded > 0) {
           await db.execute({
             sql: "UPDATE memories SET image_embedded_at = datetime('now') WHERE id = ?",

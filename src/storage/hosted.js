@@ -108,7 +108,22 @@ export class HostedStorageAdapter extends StorageInterface {
     return { _raw: true, text, isError: false };
   }
 
-  async recallMemories(_wsPath, { query, tags, type, limit, workspace }) {
+  async recallMemories(_wsPath, { query, tags, type, limit, workspace, images }) {
+    // Use POST when images are present (GET can't carry binary data)
+    if (images?.length > 0) {
+      const body = { images };
+      if (query) body.query = query;
+      if (tags?.length) body.tags = tags;
+      if (type) body.type = type;
+      if (limit) body.limit = limit;
+      // Note: cross-workspace peek not supported for image search
+
+      const json = await this._fetchJson("POST", "/v1/memories/recall", body);
+      if (json.error) return { error: json.error };
+      return { _raw: true, text: json.text, memories: json.memories || [], isError: false };
+    }
+
+    // Existing GET path for text-only recall
     const params = new URLSearchParams({ query, format: "json" });
     if (tags?.length) params.set("tags", tags.join(","));
     if (type) params.set("type", type);

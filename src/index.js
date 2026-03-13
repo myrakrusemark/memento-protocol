@@ -257,11 +257,13 @@ Use tags generously — they power recall. Set expiration for time-sensitive fac
 
 server.tool(
   "memento_recall",
-  `Search stored memories by keyword, tag, or type. Use this before starting work on any topic — someone may have already figured it out.
+  `Search stored memories by keyword, tag, type, or image similarity. Use this before starting work on any topic — someone may have already figured it out.
 
-Results are ranked by relevance (keyword match + recency + access frequency). Each recall increments the memory's access count, reinforcing important memories and letting unused ones decay naturally.`,
+Results are ranked by relevance (keyword match + semantic similarity + recency + access frequency). Each recall increments the memory's access count, reinforcing important memories and letting unused ones decay naturally.
+
+Supports image search: provide image_path to find visually similar memories. Can combine text query + image for multi-modal search.`,
   {
-    query: z.string().describe("Search query (matched against memory content)"),
+    query: z.string().optional().describe("Search query (matched against memory content). Required unless image_path is provided."),
     tags: z.array(z.string()).optional().describe("Filter by tags (matches any)"),
     type: z
       .string()
@@ -269,9 +271,57 @@ Results are ranked by relevance (keyword match + recency + access frequency). Ea
       .describe("Filter by type: fact, decision, observation, instruction"),
     limit: z.number().optional().describe("Max results (default: 10)"),
     workspace: z.string().optional().describe('Omit to search your own workspace. Set to a workspace name (e.g. "fathom") to search that workspace instead.'),
+    image_path: z.string().optional().describe(
+      "Path to an image file to search by visual similarity. Can combine with query for multi-modal search."
+    ),
   },
-  async ({ query, tags, type, limit, workspace }) => {
-    const result = await storage.recallMemories(null, { query, tags, type, limit, workspace });
+  async ({ query, tags, type, limit, workspace, image_path }) => {
+    if (!query && !image_path) {
+      return {
+        content: [{ type: "text", text: 'At least one of "query" or "image_path" is required.' }],
+        isError: true,
+      };
+    }
+
+    // Process image if provided
+    let images;
+    if (image_path) {
+      const MIME_MAP = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp" };
+      const ext = path.extname(image_path).toLowerCase();
+      const mimetype = MIME_MAP[ext];
+      if (!mimetype) {
+        return {
+          content: [{ type: "text", text: `Unsupported image format: ${ext}. Allowed: .jpg, .jpeg, .png, .gif, .webp` }],
+          isError: true,
+        };
+      }
+
+      let buffer;
+      try {
+        buffer = fs.readFileSync(image_path);
+      } catch (err) {
+        return {
+          content: [{ type: "text", text: `Cannot read image: ${err.message}` }],
+          isError: true,
+        };
+      }
+
+      // Downscale to 224x224 via sharp for efficient embedding
+      try {
+        const sharp = (await import("sharp")).default;
+        buffer = await sharp(buffer)
+          .resize(224, 224, { fit: "cover" })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+      } catch {
+        // If sharp fails, send the original — Nomic resizes internally anyway
+      }
+
+      const data = buffer.toString("base64");
+      images = [{ data, mimetype: "image/jpeg" }];
+    }
+
+    const result = await storage.recallMemories(null, { query, tags, type, limit, workspace, images });
 
     if (result._raw) {
       return {

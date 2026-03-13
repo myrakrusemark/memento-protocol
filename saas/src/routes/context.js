@@ -7,9 +7,10 @@
 
 import { Hono } from "hono";
 import { scoreAndRankMemories, hybridRank } from "../services/scoring.js";
-import { semanticSearch } from "../services/embeddings.js";
+import { semanticSearch, semanticMultiSearch } from "../services/embeddings.js";
 import { decryptField, getWorkspaceKey } from "../services/crypto.js";
 import { getControlDb, getWorkspaceDb } from "../db/connection.js";
+import { validateSearchImages } from "../services/image-validation.js";
 const context = new Hono();
 
 function safeParseTags(tagsStr) {
@@ -152,6 +153,16 @@ context.post("/", async (c) => {
   if (include.includes("memories") && message) {
     const keywords = extractKeywords(message);
 
+    // Validate and decode search images if provided
+    let decodedImages = [];
+    if (Array.isArray(body.images) && body.images.length > 0) {
+      const validation = validateSearchImages(body.images);
+      if (!validation.error) {
+        decodedImages = validation.decoded;
+      }
+      // Silently ignore invalid images in context endpoint (non-critical path)
+    }
+
     const memoriesResult = await db.execute({
       sql: `SELECT id, content, type, tags, created_at, expires_at,
                    access_count, last_accessed_at, linkages
@@ -180,8 +191,10 @@ context.post("/", async (c) => {
     const threshold = parseFloat(thresholdResult.rows[0]?.value ?? "0") || 0;
     const filteredKeyword = threshold > 0 ? keywordResults.filter((r) => r.score >= threshold) : keywordResults;
 
-    // Semantic search (parallel, gracefully degrades to [])
-    const vectorResults = await semanticSearch(c.env, workspaceName, message, 10);
+    // Semantic search — multi-modal if images provided (parallel, gracefully degrades to [])
+    const vectorResults = decodedImages.length > 0
+      ? await semanticMultiSearch(c.env, workspaceName, { text: message, images: decodedImages }, 10)
+      : await semanticSearch(c.env, workspaceName, message, 10);
 
     let topResults;
     let isHybrid = false;
