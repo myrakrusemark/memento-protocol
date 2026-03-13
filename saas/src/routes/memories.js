@@ -15,7 +15,7 @@
 import { Hono } from "hono";
 import { randomUUID } from "node:crypto";
 import { scoreAndRankMemories, shouldAbstain } from "../services/scoring.js";
-import { embedAndStore, removeVector } from "../services/embeddings.js";
+import { embedAndStore, embedImageAndStore, removeVector, removeImageVectors } from "../services/embeddings.js";
 import { traverseGraph, getRelated } from "../services/graph.js";
 import { getLimits } from "../config/plans.js";
 import { encryptField, decryptField } from "../services/crypto.js";
@@ -153,6 +153,14 @@ memories.post("/", async (c) => {
 
   // Fire-and-forget embedding (uses plaintext for vector indexing)
   embedAndStore(c.env, c.get("workspaceName"), id, content).catch(() => {});
+
+  // Fire-and-forget image embeddings — each image gets its own vector in the same space
+  if (imagesMeta.length > 0) {
+    for (let idx = 0; idx < body.images.length; idx++) {
+      const decoded = Uint8Array.from(atob(body.images[idx].data), (ch) => ch.charCodeAt(0));
+      embedImageAndStore(c.env, c.get("workspaceName"), id, decoded, idx).catch(() => {});
+    }
+  }
 
   // Fire-and-forget activity log
   db.execute({
@@ -434,7 +442,7 @@ memories.get("/recall", async (c) => {
         : "";
       const memImages = safeParseJson(m.images, []);
       const imgStr = memImages.length
-        ? `\nImages: [${memImages.length} image${memImages.length === 1 ? "" : "s"}] ${memImages.map((img) => `/v1/images/${img.key}`).join(", ")}`
+        ? `\n📷 ${memImages.length} image${memImages.length === 1 ? "" : "s"} → memento_view_image("${m.id}")`
         : "";
       return `**${m.id}** (${m.type})${tagStr}${wsStr}${expStr}\n${m.content}${linkStr}${imgStr}`;
     })
@@ -708,8 +716,11 @@ memories.delete("/:id", async (c) => {
     args: [memoryId],
   });
 
-  // Clean up vector index (fire-and-forget)
+  // Clean up vector index (fire-and-forget) — text + image vectors
   removeVector(c.env, c.get("workspaceName"), memoryId).catch(() => {});
+  if (images.length > 0) {
+    removeImageVectors(c.env, c.get("workspaceName"), memoryId, images.length).catch(() => {});
+  }
 
   // Fire-and-forget activity log
   db.execute({

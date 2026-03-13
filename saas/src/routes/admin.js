@@ -17,13 +17,30 @@ admin.post("/backfill-embeddings", async (c) => {
   const db = c.get("workspaceDb");
   const workspaceName = c.get("workspaceName");
 
-  const result = await backfillWorkspace(c.env, db, workspaceName);
+  const encKey = c.get("encryptionKey");
+  const body = await c.req.json().catch(() => ({}));
+  const batchSize = Math.min(200, Math.max(1, parseInt(body.batch_size || "100", 10)));
+
+  // Optional: reset embedded_at for full re-embed (model migration)
+  if (body.reset) {
+    await db.execute({ sql: "UPDATE memories SET embedded_at = NULL", args: [] });
+  }
+
+  const result = await backfillWorkspace(c.env, db, workspaceName, encKey, batchSize);
+
+  const imgStats = result.images_embedded > 0 || result.images_errors > 0
+    ? `, ${result.images_embedded} images embedded, ${result.images_errors} image errors`
+    : "";
+
+  const remainStr = result.remaining > 0
+    ? `\n${result.remaining} memories remaining — call again to continue.`
+    : "";
 
   return c.json({
     content: [
       {
         type: "text",
-        text: `Backfill complete: ${result.embedded} embedded, ${result.skipped} skipped, ${result.errors} errors`,
+        text: `Backfill batch: ${result.embedded} text embedded, ${result.skipped} skipped, ${result.errors} errors${imgStats}${remainStr}`,
       },
     ],
   });

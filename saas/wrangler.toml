@@ -12,6 +12,7 @@ compatibility_flags = ["nodejs_compat"]
 #   ENCRYPTION_MASTER_KEY  - 64 hex chars (32 bytes) master key for envelope encryption
 #                            Generate with: openssl rand -hex 32
 #                            Wraps per-workspace AES-256-GCM keys. Required for at-rest encryption.
+#   NOMIC_API_KEY          - Nomic Atlas API key for text+image embeddings (nomic-embed-text/vision-v1.5)
 
 [observability]
 enabled = true
@@ -21,7 +22,7 @@ binding = "AI"
 
 [[vectorize]]
 binding = "VECTORIZE"
-index_name = "memento-memories"
+index_name = "memento-memories-v2"
 
 [[r2_buckets]]
 binding = "IMAGES"

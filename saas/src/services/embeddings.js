@@ -1,27 +1,110 @@
 /**
  * Embedding service for semantic recall.
  *
- * Uses Cloudflare Workers AI (@cf/baai/bge-small-en-v1.5) for embeddings
- * and Vectorize for vector storage/search. All functions degrade gracefully
- * when AI or Vectorize bindings are unavailable (local dev, free tier).
+ * Uses Nomic Embed (text-v1.5 + vision-v1.5) for unified text+image embeddings
+ * in a shared 768-dim vector space. Text and images are naturally cross-searchable.
+ * Vectors stored in Cloudflare Vectorize.
  */
 
+import { decryptField, isEncrypted } from "./crypto.js";
+
+const NOMIC_TEXT_URL = "https://api-atlas.nomic.ai/v1/embedding/text";
+const NOMIC_IMAGE_URL = "https://api-atlas.nomic.ai/v1/embedding/image";
+const NOMIC_TEXT_MODEL = "nomic-embed-text-v1.5";
+const NOMIC_IMAGE_MODEL = "nomic-embed-vision-v1.5";
+
 /**
- * Embed a text string into a 384-dimension vector.
+ * Embed a text string into a 768-dimension vector via Nomic.
  *
  * @param {object} env - Workers environment bindings
  * @param {string} text - Text to embed
- * @returns {Promise<Float32Array|null>} Embedding vector, or null if bindings unavailable
+ * @returns {Promise<Float32Array|null>} Embedding vector, or null if unavailable
  */
 export async function embedText(env, text) {
-  if (!env?.AI) return null;
+  if (!env?.NOMIC_API_KEY) return null;
 
-  const result = await env.AI.run("@cf/baai/bge-small-en-v1.5", {
-    text: [text],
+  const response = await fetch(NOMIC_TEXT_URL, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${env.NOMIC_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: NOMIC_TEXT_MODEL,
+      texts: [text],
+      task_type: "search_document",
+    }),
   });
 
-  if (!result?.data?.[0]) return null;
-  return new Float32Array(result.data[0]);
+  if (!response.ok) return null;
+
+  const result = await response.json();
+  if (!result?.embeddings?.[0]) return null;
+  return new Float32Array(result.embeddings[0]);
+}
+
+/**
+ * Embed a text query into a 768-dimension vector via Nomic.
+ * Uses task_type "search_query" for asymmetric search.
+ *
+ * @param {object} env - Workers environment bindings
+ * @param {string} text - Query text to embed
+ * @returns {Promise<Float32Array|null>} Embedding vector, or null if unavailable
+ */
+export async function embedQuery(env, text) {
+  if (!env?.NOMIC_API_KEY) return null;
+
+  const response = await fetch(NOMIC_TEXT_URL, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${env.NOMIC_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: NOMIC_TEXT_MODEL,
+      texts: [text],
+      task_type: "search_query",
+    }),
+  });
+
+  if (!response.ok) return null;
+
+  const result = await response.json();
+  if (!result?.embeddings?.[0]) return null;
+  return new Float32Array(result.embeddings[0]);
+}
+
+/**
+ * Embed an image into a 768-dimension vector via Nomic Vision.
+ * Returns a vector in the same space as text embeddings — cross-modal search works naturally.
+ *
+ * @param {object} env - Workers environment bindings
+ * @param {Uint8Array} imageBytes - Raw image bytes
+ * @returns {Promise<Float32Array|null>} Embedding vector, or null if unavailable
+ */
+export async function embedImage(env, imageBytes) {
+  if (!env?.NOMIC_API_KEY) return null;
+
+  const base64 = btoa(String.fromCharCode(...imageBytes));
+  const dataUri = `data:image/jpeg;base64,${base64}`;
+
+  const response = await fetch(NOMIC_IMAGE_URL, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${env.NOMIC_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: NOMIC_IMAGE_MODEL,
+      images: [dataUri],
+    }),
+  });
+
+  if (!response.ok) return null;
+
+  const result = await response.json();
+  if (!result?.embeddings?.[0]) return null;
+  return new Float32Array(result.embeddings[0]);
 }
 
 /**
@@ -34,7 +117,7 @@ export async function embedText(env, text) {
  * @returns {Promise<boolean>} True if stored successfully, false otherwise
  */
 export async function embedAndStore(env, workspaceId, memoryId, content) {
-  if (!env?.AI || !env?.VECTORIZE) return false;
+  if (!env?.NOMIC_API_KEY || !env?.VECTORIZE) return false;
 
   const embedding = await embedText(env, content);
   if (!embedding) return false;
@@ -44,7 +127,36 @@ export async function embedAndStore(env, workspaceId, memoryId, content) {
     {
       id: vectorId,
       values: Array.from(embedding),
-      metadata: { workspace_id: workspaceId, memory_id: memoryId },
+      metadata: { workspace_id: workspaceId, memory_id: memoryId, type: "text" },
+    },
+  ]);
+
+  return true;
+}
+
+/**
+ * Embed an image and upsert the vector into the Vectorize index.
+ * Vector ID format: {workspaceId}:{memoryId}:img:{imageIndex}
+ *
+ * @param {object} env - Workers environment bindings
+ * @param {string} workspaceId - Workspace identifier
+ * @param {string} memoryId - Memory row ID
+ * @param {Uint8Array} imageBytes - Raw image bytes
+ * @param {number} imageIndex - Index of the image within the memory
+ * @returns {Promise<boolean>} True if stored successfully, false otherwise
+ */
+export async function embedImageAndStore(env, workspaceId, memoryId, imageBytes, imageIndex) {
+  if (!env?.NOMIC_API_KEY || !env?.VECTORIZE) return false;
+
+  const embedding = await embedImage(env, imageBytes);
+  if (!embedding) return false;
+
+  const vectorId = `${workspaceId}:${memoryId}:img:${imageIndex}`;
+  await env.VECTORIZE.upsert([
+    {
+      id: vectorId,
+      values: Array.from(embedding),
+      metadata: { workspace_id: workspaceId, memory_id: memoryId, type: "image", image_index: imageIndex },
     },
   ]);
 
@@ -61,27 +173,45 @@ export async function embedAndStore(env, workspaceId, memoryId, content) {
  * @returns {Promise<Array<{id: string, score: number}>>} Matching memory IDs with scores
  */
 export async function semanticSearch(env, workspaceId, query, topK = 10) {
-  if (!env?.AI || !env?.VECTORIZE) return [];
+  if (!env?.NOMIC_API_KEY || !env?.VECTORIZE) return [];
 
-  const embedding = await embedText(env, query);
+  const embedding = await embedQuery(env, query);
   if (!embedding) return [];
 
-  const results = await env.VECTORIZE.query(Array.from(embedding), {
-    topK,
-    filter: { workspace_id: workspaceId },
-    returnMetadata: true,
-  });
+  let results;
+  try {
+    results = await env.VECTORIZE.query(Array.from(embedding), {
+      topK,
+      filter: { workspace_id: workspaceId },
+      returnMetadata: true,
+    });
+  } catch {
+    return [];
+  }
 
   if (!results?.matches) return [];
 
-  return results.matches.map((match) => ({
-    id: match.metadata?.memory_id || match.id.split(":").pop(),
-    score: match.score,
-  }));
+  // Deduplicate by memory_id — a memory may match via both text and image vectors.
+  // Keep the highest-scoring match per memory.
+  const bestByMemory = new Map();
+  for (const match of results.matches) {
+    const memoryId = match.metadata?.memory_id || match.id.split(":")[1];
+    const isImage = match.metadata?.type === "image";
+    const existing = bestByMemory.get(memoryId);
+    if (!existing || match.score > existing.score) {
+      bestByMemory.set(memoryId, {
+        id: memoryId,
+        score: match.score,
+        matched_image: isImage,
+      });
+    }
+  }
+
+  return Array.from(bestByMemory.values());
 }
 
 /**
- * Remove a vector from the Vectorize index.
+ * Remove a text vector from the Vectorize index.
  *
  * @param {object} env - Workers environment bindings
  * @param {string} workspaceId - Workspace identifier
@@ -97,29 +227,63 @@ export async function removeVector(env, workspaceId, memoryId) {
 }
 
 /**
+ * Remove image vectors from the Vectorize index for a given memory.
+ *
+ * @param {object} env - Workers environment bindings
+ * @param {string} workspaceId - Workspace identifier
+ * @param {string} memoryId - Memory row ID
+ * @param {number} imageCount - Number of images to remove
+ * @returns {Promise<boolean>} True if deleted, false if bindings unavailable
+ */
+export async function removeImageVectors(env, workspaceId, memoryId, imageCount) {
+  if (!env?.VECTORIZE || imageCount === 0) return false;
+
+  const ids = [];
+  for (let i = 0; i < imageCount; i++) {
+    ids.push(`${workspaceId}:${memoryId}:img:${i}`);
+  }
+  await env.VECTORIZE.deleteByIds(ids);
+  return true;
+}
+
+/**
  * Backfill embeddings for all memories that haven't been embedded yet.
- * Processes in batches of 50 to stay within Workers AI rate limits.
+ * Re-embeds text with Nomic and embeds images from R2.
+ * Processes in batches of 50 to stay within rate limits.
  *
  * @param {object} env - Workers environment bindings
  * @param {object} db - Workspace database client
  * @param {string} workspaceId - Workspace identifier
- * @returns {Promise<{embedded: number, skipped: number, errors: number}>}
+ * @param {CryptoKey|null} [encKey=null] - Workspace encryption key for decrypting content
+ * @param {number} [batchLimit=100] - Max memories to process per call (to stay within subrequest limits)
+ * @returns {Promise<{embedded: number, skipped: number, errors: number, images_embedded: number, images_errors: number, remaining: number}>}
  */
-export async function backfillWorkspace(env, db, workspaceId) {
-  if (!env?.AI || !env?.VECTORIZE) {
-    return { embedded: 0, skipped: 0, errors: 0 };
+export async function backfillWorkspace(env, db, workspaceId, encKey = null, batchLimit = 100) {
+  if (!env?.NOMIC_API_KEY || !env?.VECTORIZE) {
+    return { embedded: 0, skipped: 0, errors: 0, images_embedded: 0, images_errors: 0, remaining: 0 };
   }
 
+  // Only process memories that haven't been embedded yet (or were embedded with old model)
   const result = await db.execute({
-    sql: `SELECT id, content FROM memories
-          WHERE embedded_at IS NULL AND consolidated = 0
-          ORDER BY created_at DESC`,
+    sql: `SELECT id, content, images FROM memories
+          WHERE consolidated = 0 AND embedded_at IS NULL
+          ORDER BY created_at DESC
+          LIMIT ?`,
+    args: [batchLimit],
+  });
+
+  // Count remaining for progress tracking
+  const countResult = await db.execute({
+    sql: `SELECT COUNT(*) as count FROM memories WHERE consolidated = 0 AND embedded_at IS NULL`,
     args: [],
   });
+  const totalRemaining = countResult.rows[0].count;
 
   let embedded = 0;
   let skipped = 0;
   let errors = 0;
+  let images_embedded = 0;
+  let images_errors = 0;
 
   const rows = result.rows;
   const BATCH_SIZE = 50;
@@ -128,27 +292,71 @@ export async function backfillWorkspace(env, db, workspaceId) {
     const batch = rows.slice(i, i + BATCH_SIZE);
 
     for (const row of batch) {
-      if (!row.content || row.content.trim().length === 0) {
-        skipped++;
-        continue;
+      // Decrypt content if needed
+      let plaintext = row.content;
+      if (encKey && plaintext && isEncrypted(plaintext)) {
+        try {
+          plaintext = await decryptField(plaintext, encKey);
+        } catch {
+          errors++;
+          continue;
+        }
       }
 
-      try {
-        const success = await embedAndStore(env, workspaceId, row.id, row.content);
-        if (success) {
-          await db.execute({
-            sql: "UPDATE memories SET embedded_at = datetime('now') WHERE id = ?",
-            args: [row.id],
-          });
-          embedded++;
-        } else {
-          skipped++;
+      // Re-embed text
+      if (!plaintext || plaintext.trim().length === 0) {
+        skipped++;
+      } else {
+        try {
+          const success = await embedAndStore(env, workspaceId, row.id, plaintext);
+          if (success) {
+            await db.execute({
+              sql: "UPDATE memories SET embedded_at = datetime('now') WHERE id = ?",
+              args: [row.id],
+            });
+            embedded++;
+          } else {
+            skipped++;
+          }
+        } catch {
+          errors++;
         }
+      }
+
+      // Embed images from R2
+      let imagesMeta;
+      try {
+        imagesMeta = JSON.parse(row.images || "[]");
       } catch {
-        errors++;
+        imagesMeta = [];
+      }
+
+      if (imagesMeta.length > 0 && env?.IMAGES) {
+        for (let idx = 0; idx < imagesMeta.length; idx++) {
+          try {
+            const obj = await env.IMAGES.get(imagesMeta[idx].key);
+            if (!obj) continue;
+            const imageBytes = new Uint8Array(await obj.arrayBuffer());
+            const success = await embedImageAndStore(env, workspaceId, row.id, imageBytes, idx);
+            if (success) {
+              images_embedded++;
+            }
+          } catch {
+            images_errors++;
+          }
+        }
+
+        // Mark image embedding timestamp
+        if (images_embedded > 0) {
+          await db.execute({
+            sql: "UPDATE memories SET image_embedded_at = datetime('now') WHERE id = ?",
+            args: [row.id],
+          }).catch(() => {});
+        }
       }
     }
   }
 
-  return { embedded, skipped, errors };
+  const remaining = totalRemaining - embedded - skipped - errors;
+  return { embedded, skipped, errors, images_embedded, images_errors, remaining: Math.max(0, remaining) };
 }

@@ -172,9 +172,9 @@ describe("memories with images (mock R2)", () => {
 
     const res = await h.request("GET", "/v1/memories/recall?query=searchable+photo");
     const body = await res.json();
-    assert.ok(body.content[0].text.includes("Images:"));
+    assert.ok(body.content[0].text.includes("📷"));
     assert.ok(body.content[0].text.includes("1 image"));
-    assert.ok(body.content[0].text.includes("/v1/images/"));
+    assert.ok(body.content[0].text.includes("memento_view_image"));
   });
 
   it("GET /v1/memories/recall?format=json — returns structured data with images", async () => {
