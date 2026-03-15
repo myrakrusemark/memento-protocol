@@ -169,11 +169,11 @@ Sections: active_work, standing_decisions, skip_list, session_notes.`,
 );
 
 // ---------------------------------------------------------------------------
-// Tool: memento_store
+// Tool: memento_remember
 // ---------------------------------------------------------------------------
 
 server.tool(
-  "memento_store",
+  "memento_remember",
   `Store a discrete memory — a fact, decision, observation, or instruction — with tags and optional expiration.
 
 IMPORTANT: Write memories as instructions, not logs.

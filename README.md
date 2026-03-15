@@ -101,7 +101,7 @@ The MCP server connects at startup. Restart so it picks up the new config.
 
 ```text
 > memento_health()              # verify connection
-> memento_store(                # store your first memory
+> memento_remember(             # store your first memory
     content: "API uses /v2 endpoints. Auth is Bearer token in header.",
     type: "instruction",
     tags: ["api", "auth"]
@@ -126,7 +126,7 @@ On session start:
 3. `memento_recall` with current task context — find relevant past memories
 
 During work — actively manage your own memories:
-- `memento_store` when you learn something, make a decision, or discover a pattern
+- `memento_remember` when you learn something, make a decision, or discover a pattern
 - `memento_recall` before starting any subtask — someone may have already figured it out
 - `memento_item_update` as you make progress — don't wait until the end
 - `memento_item_create` when new work emerges

@@ -25,8 +25,12 @@ admin.post("/backfill-embeddings", async (c) => {
   if (body.reset) {
     await db.execute({ sql: "UPDATE memories SET embedded_at = NULL", args: [] });
   }
+  if (body.reset_images) {
+    await db.execute({ sql: "UPDATE memories SET image_embedded_at = NULL", args: [] });
+  }
 
-  const result = await backfillWorkspace(c.env, db, workspaceName, encKey, batchSize);
+  const opts = { imagesOnly: !!body.images_only };
+  const result = await backfillWorkspace(c.env, db, workspaceName, encKey, batchSize, opts);
 
   const imgStats = result.images_embedded > 0 || result.images_errors > 0
     ? `, ${result.images_embedded} images embedded, ${result.images_errors} image errors`

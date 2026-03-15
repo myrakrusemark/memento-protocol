@@ -234,6 +234,11 @@ fi
 
 "$TOAST" memento "✓ ${SAAS_COUNT} memories recalled" &>/dev/null
 
+# Report recall count to conversation store for fathom-app
+curl -s -X POST "http://localhost:4243/api/conversation/${MEMENTO_WS}/hook" \
+  -H "Content-Type: application/json" \
+  -d "{\"hook\":\"UserPromptSubmit\",\"memories\":${SAAS_COUNT}}" --max-time 2 &>/dev/null &
+
 # Build summary line
 SUMMARY="Memento Recall (${SAAS_COUNT})"
 

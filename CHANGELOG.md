@@ -6,6 +6,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ---
 
+## [0.3.15] - 2026-03-13
+
+### Changed
+- Renamed `memento_store` → `memento_remember` for cognitive language consistency — pairs with `memento_recall`.
+
+---
+
 ## [Unreleased]
 
 ### Added
@@ -16,7 +23,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 - `source:distill` tag renamed to `source:distill:llama-3.1-8b` to encode model provenance. The `claude-code` path tags memories `source:distill:claude-code`.
 
 ### Removed
-- **Passive memory extraction (auto_extract)** — removed conversation buffer, auto-extraction from `/v1/context`, and buffer fallback from `/v1/extract`. Smart models know when to store via `memento_store`; passive extraction produced noisy, low-signal memories. The `memento_extract` tool and `/v1/extract` route still work with explicit transcripts. The `conversation_buffer` table is no longer created for new workspaces.
+- **Passive memory extraction (auto_extract)** — removed conversation buffer, auto-extraction from `/v1/context`, and buffer fallback from `/v1/extract`. Smart models know when to store via `memento_remember`; passive extraction produced noisy, low-signal memories. The `memento_extract` tool and `/v1/extract` route still work with explicit transcripts. The `conversation_buffer` table is no longer created for new workspaces.
 
 ---
 
@@ -85,7 +92,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version
 
 ### Added
 - Initial release
-- MCP server with `memento_init`, `memento_read`, `memento_update`, `memento_store`, `memento_recall`, `memento_skip_add`, `memento_skip_check`, `memento_health`
+- MCP server with `memento_init`, `memento_read`, `memento_update`, `memento_remember`, `memento_recall`, `memento_skip_add`, `memento_skip_check`, `memento_health`
 - SaaS API on Cloudflare Workers + Turso edge database
 - Semantic search via `bge-small-en-v1.5` embeddings in Cloudflare Vectorize
 - Free tier: 100 memories, 20 items, 1 workspace

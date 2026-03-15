@@ -317,7 +317,7 @@ This outline is the blueprint for comprehensive documentation. Each section belo
 - memento_init — Initialize workspace
 - memento_read — Read working memory
 - memento_update — Update working memory section
-- memento_store — Store a memory
+- memento_remember — Store a memory
 - memento_recall — Search memories (calls /v1/context in hosted mode)
 - memento_consolidate — Consolidate overlapping memories into a single richer memory
 - memento_skip_add — Add skip entry

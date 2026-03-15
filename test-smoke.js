@@ -33,7 +33,7 @@ console.log("Init:", init.content[0].text.split("\n")[0]);
 
 // Store
 const store = await client.callTool({
-  name: "memento_store",
+  name: "memento_remember",
   arguments: {
     content: "Smoke test memory — safe to delete",
     tags: ["smoke-test"],
