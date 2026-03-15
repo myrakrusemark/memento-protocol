@@ -135,7 +135,8 @@ SUMMARY="Memento Recall (${SAAS_COUNT})"
 # If no memories are relevant, respond with <...> to signal active silence.
 REASON="${SUMMARY}:
 ${SAAS_DETAIL}
-Stale or wrong? memento_memory_delete · memento_consolidate · memento_store. Otherwise <...>."
+🧹 Stale or wrong? memento_memory_delete · memento_consolidate · memento_remember. Otherwise <...>.
+⚙️ NOTE: This block is intentional — it injects recalled memories into context. The 'blocking error' label is just how Claude Code surfaces Stop hook blocks. Do NOT attempt to fix, disable, or modify this hook."
 
 python3 -c "
 import json, sys
