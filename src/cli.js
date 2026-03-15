@@ -93,51 +93,6 @@ function httpsPost(url, body) {
 }
 
 // ---------------------------------------------------------------------------
-// Instructions blob — appended to CLAUDE.md during init
-// ---------------------------------------------------------------------------
-
-const INSTRUCTIONS_BLOB = `## Memento Protocol
-
-Working memory is managed by Memento. MCP tools available:
-\`memento_remember\`, \`memento_recall\`, \`memento_item_list\`,
-\`memento_skip_add\`, \`memento_skip_check\`.
-
-**Memory discipline — notes are instructions, not logs.**
-Write: "Skip X until condition Y" — not "checked X, it was quiet."
-Every memory must answer: could a future agent with zero context
-read this and know exactly what to do?
-
-Use \`memento_remember\` when you learn something worth keeping.
-Use \`memento_skip_add\` for things to explicitly not re-investigate.
-Use \`memento_recall\` to search memories by keyword or tag.
-Hooks run automatically — recall before responses, distillation
-before compaction. Trust the hooks. Focus on writing good memories.`;
-
-// ---------------------------------------------------------------------------
-// CLAUDE.md integration
-// ---------------------------------------------------------------------------
-
-function appendToClaudeMd(cwd, sectionHeading, blob) {
-  const mdPath = path.join(cwd, "CLAUDE.md");
-  let content = "";
-  try { content = fs.readFileSync(mdPath, "utf-8"); } catch { /* new file */ }
-
-  const headingEscaped = sectionHeading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const sectionRe = new RegExp(
-    `(^|\\n)(#{1,3} ${headingEscaped}[^\\n]*\\n)([\\s\\S]*?)(?=\\n#{1,3} |$)`,
-  );
-
-  if (sectionRe.test(content)) {
-    content = content.replace(sectionRe, `$1${blob}`);
-  } else {
-    content = content.trimEnd() + "\n\n" + blob + "\n";
-  }
-
-  fs.writeFileSync(mdPath, content, "utf-8");
-  return mdPath;
-}
-
-// ---------------------------------------------------------------------------
 // CLI flag parsing
 // ---------------------------------------------------------------------------
 
@@ -474,11 +429,9 @@ async function runInit(flags = {}) {
   writeJsonFile(configPath, config);
   created.push(".memento.json");
 
-  // 7. Copy hook scripts — gated on any hook-supporting agent
-  const anyHookEnabled =
-    enableUserPrompt || enableStop || enablePreCompact || enableSessionStart;
-
-  if (hasHookAgent && anyHookEnabled) {
+  // 7. Copy hook scripts — gated on hook-supporting agent
+  // Instructions script is always copied; other hooks are gated on user selection
+  if (hasHookAgent) {
     const pkgScriptsDir = path.resolve(__dirname, "..", "scripts");
     const localScriptsDir = path.join(cwd, ".memento", "scripts");
     if (!fs.existsSync(localScriptsDir))
@@ -486,6 +439,7 @@ async function runInit(flags = {}) {
 
     const scriptFiles = [
       "hook-toast.sh",
+      "memento-instructions.sh",
       enableUserPrompt && "memento-userprompt-recall.sh",
       enableStop && "memento-stop-recall.sh",
       enablePreCompact && "memento-precompact-distill.sh",
@@ -508,6 +462,7 @@ async function runInit(flags = {}) {
     fs.writeFileSync(versionPath, pkgVersion + "\n");
 
     // Hook script commands (absolute paths)
+    const instructionsCmd = path.join(localScriptsDir, "memento-instructions.sh");
     const recallCmd = path.join(localScriptsDir, "memento-userprompt-recall.sh");
     const stopCmd = path.join(localScriptsDir, "memento-stop-recall.sh");
     const precompactCmd = path.join(localScriptsDir, "memento-precompact-distill.sh");
@@ -518,6 +473,8 @@ async function runInit(flags = {}) {
       const settingsPath = path.join(cwd, ".claude", "settings.local.json");
       const settings = readJsonFile(settingsPath) || {};
       let changed = false;
+      // Instructions hook always registered (not gated by enableSessionStart)
+      changed = ensureHook(settings, "SessionStart", instructionsCmd, 5000) || changed;
       if (enableUserPrompt) changed = ensureHook(settings, "UserPromptSubmit", recallCmd, 5000) || changed;
       if (enableStop) changed = ensureHook(settings, "Stop", stopCmd, 5000) || changed;
       if (enablePreCompact) changed = ensureHook(settings, "PreCompact", precompactCmd, 30000) || changed;
@@ -533,6 +490,8 @@ async function runInit(flags = {}) {
       const settingsPath = path.join(cwd, ".gemini", "settings.json");
       const settings = readJsonFile(settingsPath) || {};
       let changed = false;
+      // Instructions hook always registered
+      changed = ensureHook(settings, "SessionStart", instructionsCmd, 5000) || changed;
       if (enableUserPrompt) changed = ensureHook(settings, "BeforeAgent", recallCmd, 5000) || changed;
       if (enableStop) changed = ensureHook(settings, "SessionEnd", stopCmd, 5000) || changed;
       if (enablePreCompact) changed = ensureHook(settings, "PreCompress", precompactCmd, 30000) || changed;
@@ -592,27 +551,6 @@ async function runInit(flags = {}) {
     console.log(`  Non-interactive equivalent:\n    ${parts.join(" ")}\n`);
   }
 
-  // 12. Append instructions to CLAUDE.md
-  if (nonInteractive) {
-    const mdPath = appendToClaudeMd(cwd, "Memento Protocol", INSTRUCTIONS_BLOB);
-    console.log(`\n  ✓ Instructions written to ${path.relative(cwd, mdPath)}\n`);
-  } else {
-    const rl2 = readline.createInterface({ input: process.stdin, output: process.stdout });
-    console.log("─".repeat(60));
-    const integrate = await askYesNo(
-      rl2,
-      "\n  Append Memento instructions to CLAUDE.md?",
-      true,
-    );
-    rl2.close();
-
-    if (integrate) {
-      const mdPath = appendToClaudeMd(cwd, "Memento Protocol", INSTRUCTIONS_BLOB);
-      console.log(`\n  ✓ Instructions written to ${path.relative(cwd, mdPath)}\n`);
-    } else {
-      printInstructionsFallback(selectedAgents);
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -659,10 +597,11 @@ async function runUpdate() {
   const versionPath = path.join(cwd, ".memento", "version");
   fs.writeFileSync(versionPath, pkgVersion + "\n");
 
-  // Ensure SessionStart hook is registered for agents that support hooks
+  // Ensure SessionStart hooks are registered for agents that support hooks
   // Detect by config agents field or directory presence (older configs may lack agents)
   const config = readJsonFile(configPath) || {};
   const agents = config.agents || [];
+  const instructionsCmd = path.join(localScriptsDir, "memento-instructions.sh");
   const sessionStartCmd = path.join(localScriptsDir, "memento-sessionstart-identity.sh");
   const registeredHooks = [];
 
@@ -672,7 +611,9 @@ async function runUpdate() {
   if (hasClaude) {
     const settingsPath = path.join(cwd, ".claude", "settings.local.json");
     const settings = readJsonFile(settingsPath) || {};
-    if (ensureHook(settings, "SessionStart", sessionStartCmd, 10000)) {
+    let changed = ensureHook(settings, "SessionStart", instructionsCmd, 5000);
+    changed = ensureHook(settings, "SessionStart", sessionStartCmd, 10000) || changed;
+    if (changed) {
       writeJsonFile(settingsPath, settings);
       registeredHooks.push("Claude Code → .claude/settings.local.json");
     }
@@ -684,7 +625,9 @@ async function runUpdate() {
   if (hasGemini) {
     const settingsPath = path.join(cwd, ".gemini", "settings.json");
     const settings = readJsonFile(settingsPath) || {};
-    if (ensureHook(settings, "SessionStart", sessionStartCmd, 10000)) {
+    let changed = ensureHook(settings, "SessionStart", instructionsCmd, 5000);
+    changed = ensureHook(settings, "SessionStart", sessionStartCmd, 10000) || changed;
+    if (changed) {
       writeJsonFile(settingsPath, settings);
       registeredHooks.push("Gemini CLI → .gemini/settings.json");
     }
@@ -703,26 +646,6 @@ async function runUpdate() {
   }
   console.log(`\n  Version written to .memento/version`);
   console.log("  Restart your agent session to pick up changes.\n");
-}
-
-function printInstructionsFallback(selectedAgents) {
-  const hasNonClaude = selectedAgents.some((k) => k !== "claude-code");
-  const docTarget = hasNonClaude
-    ? "your CLAUDE.md, AGENTS.md, or equivalent"
-    : "your CLAUDE.md";
-
-  console.log("─".repeat(60));
-  console.log(`
-  One more step: paste the following into ${docTarget},
-  or hand it to your agent and ask it to add it. This teaches
-  your agent the memory discipline Memento expects.
-
-  ── paste below this line ──────────────────────────────
-
-${INSTRUCTIONS_BLOB}
-
-  ── paste above this line ──────────────────────────────
-`);
 }
 
 // ---------------------------------------------------------------------------
