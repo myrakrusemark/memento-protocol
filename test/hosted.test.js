@@ -67,18 +67,16 @@ describe("HostedStorageAdapter", () => {
       assert.equal(result.error, undefined);
     });
 
-    it("returns alreadyExists for new workspace (middleware auto-creates)", async () => {
-      // The workspace middleware auto-creates workspaces on first request,
-      // so by the time POST /v1/workspaces runs, it already exists.
-      // This is correct behavior -- initWorkspace is idempotent in hosted mode.
+    it("succeeds for new workspace (middleware auto-creates)", async () => {
+      // The workspace middleware auto-creates workspaces on first request.
+      // initWorkspace is idempotent in hosted mode — succeeds without error.
       const newAdapter = new HostedStorageAdapter({
         apiKey: seed.apiKey,
         apiUrl: adapter.apiUrl,
         workspace: "brand-new-workspace",
       });
       const result = await newAdapter.initWorkspace(null);
-      assert.equal(result.alreadyExists, true);
-      assert.equal(result.error, undefined);
+      assert.ok(!result.error, `Expected no error, got: ${result.error}`);
     });
   });
 

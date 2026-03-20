@@ -13,9 +13,7 @@ import os from "node:os";
 import {
   AGENTS,
   writeMcpJson,
-  writeCodexToml,
   writeGeminiJson,
-  writeOpencodeJson,
 } from "../src/cli.js";
 
 // ---------------------------------------------------------------------------
@@ -43,9 +41,9 @@ function mkDir(name) {
 // ---------------------------------------------------------------------------
 
 describe("AGENTS registry", () => {
-  it("has all four agents", () => {
+  it("has all three agents", () => {
     const keys = Object.keys(AGENTS);
-    assert.deepStrictEqual(keys, ["claude-code", "codex", "gemini", "opencode"]);
+    assert.deepStrictEqual(keys, ["claude-code", "gemini", "manual"]);
   });
 
   it("each agent has required fields", () => {
@@ -58,11 +56,10 @@ describe("AGENTS registry", () => {
     }
   });
 
-  it("only claude-code has hooks", () => {
+  it("claude-code and gemini have hooks, manual does not", () => {
     assert.equal(AGENTS["claude-code"].hasHooks, true);
-    assert.equal(AGENTS["codex"].hasHooks, false);
-    assert.equal(AGENTS["gemini"].hasHooks, false);
-    assert.equal(AGENTS["opencode"].hasHooks, false);
+    assert.equal(AGENTS["gemini"].hasHooks, true);
+    assert.equal(AGENTS["manual"].hasHooks, false);
   });
 });
 
@@ -82,27 +79,15 @@ describe("agent detection", () => {
     assert.equal(AGENTS["claude-code"].detect(dir), false);
   });
 
-  it("detects codex when .codex/ exists", () => {
-    const dir = mkDir("detect-codex");
-    fs.mkdirSync(path.join(dir, ".codex"), { recursive: true });
-    assert.equal(AGENTS["codex"].detect(dir), true);
-  });
-
   it("detects gemini when .gemini/ exists", () => {
     const dir = mkDir("detect-gemini");
     fs.mkdirSync(path.join(dir, ".gemini"), { recursive: true });
     assert.equal(AGENTS["gemini"].detect(dir), true);
   });
 
-  it("detects opencode when opencode.json exists", () => {
-    const dir = mkDir("detect-opencode");
-    fs.writeFileSync(path.join(dir, "opencode.json"), "{}");
-    assert.equal(AGENTS["opencode"].detect(dir), true);
-  });
-
-  it("does not detect opencode when opencode.json missing", () => {
-    const dir = mkDir("detect-no-opencode");
-    assert.equal(AGENTS["opencode"].detect(dir), false);
+  it("manual never detects", () => {
+    const dir = mkDir("detect-manual");
+    assert.equal(AGENTS["manual"].detect(dir), false);
   });
 });
 
@@ -138,51 +123,6 @@ describe("writeMcpJson", () => {
       command: "npx",
       args: ["-y", "memento-mcp"],
     });
-  });
-});
-
-// ---------------------------------------------------------------------------
-// writeCodexToml — OpenAI Codex
-// ---------------------------------------------------------------------------
-
-describe("writeCodexToml", () => {
-  it("creates .codex/config.toml with memento section", () => {
-    const dir = mkDir("codex-new");
-    const result = writeCodexToml(dir);
-    assert.equal(result, ".codex/config.toml");
-
-    const content = fs.readFileSync(path.join(dir, ".codex", "config.toml"), "utf8");
-    assert.ok(content.includes("[mcp_servers.memento]"));
-    assert.ok(content.includes('command = "npx"'));
-    assert.ok(content.includes('args = ["-y", "memento-mcp"]'));
-  });
-
-  it("appends to existing config.toml without overwriting", () => {
-    const dir = mkDir("codex-merge");
-    const existing = '[mcp_servers.other]\ncommand = "other-cmd"\n';
-    fs.mkdirSync(path.join(dir, ".codex"), { recursive: true });
-    fs.writeFileSync(path.join(dir, ".codex", "config.toml"), existing);
-
-    writeCodexToml(dir);
-
-    const content = fs.readFileSync(path.join(dir, ".codex", "config.toml"), "utf8");
-    assert.ok(content.includes("[mcp_servers.other]"));
-    assert.ok(content.includes("[mcp_servers.memento]"));
-  });
-
-  it("skips if memento section already exists (idempotent)", () => {
-    const dir = mkDir("codex-idem");
-    const existing =
-      '[mcp_servers.memento]\ncommand = "npx"\nargs = ["-y", "memento-mcp"]\n';
-    fs.mkdirSync(path.join(dir, ".codex"), { recursive: true });
-    fs.writeFileSync(path.join(dir, ".codex", "config.toml"), existing);
-
-    const result = writeCodexToml(dir);
-    assert.equal(result, ".codex/config.toml (already configured)");
-
-    // Content unchanged
-    const content = fs.readFileSync(path.join(dir, ".codex", "config.toml"), "utf8");
-    assert.equal(content, existing);
   });
 });
 
@@ -224,42 +164,5 @@ describe("writeGeminiJson", () => {
       args: ["-y", "memento-mcp"],
     });
     assert.equal(data.theme, "dark");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// writeOpencodeJson — OpenCode
-// ---------------------------------------------------------------------------
-
-describe("writeOpencodeJson", () => {
-  it("creates opencode.json with memento MCP entry", () => {
-    const dir = mkDir("opencode-new");
-    const result = writeOpencodeJson(dir);
-    assert.equal(result, "opencode.json");
-
-    const data = JSON.parse(fs.readFileSync(path.join(dir, "opencode.json"), "utf8"));
-    assert.deepStrictEqual(data.mcp.memento, {
-      type: "local",
-      command: ["npx", "-y", "memento-mcp"],
-      enabled: true,
-    });
-  });
-
-  it("merges into existing opencode.json", () => {
-    const dir = mkDir("opencode-merge");
-    fs.writeFileSync(
-      path.join(dir, "opencode.json"),
-      JSON.stringify({ mcp: { other: { type: "local", command: ["other"] } } }),
-    );
-
-    writeOpencodeJson(dir);
-
-    const data = JSON.parse(fs.readFileSync(path.join(dir, "opencode.json"), "utf8"));
-    assert.deepStrictEqual(data.mcp.other, { type: "local", command: ["other"] });
-    assert.deepStrictEqual(data.mcp.memento, {
-      type: "local",
-      command: ["npx", "-y", "memento-mcp"],
-      enabled: true,
-    });
   });
 });

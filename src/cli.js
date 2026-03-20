@@ -97,7 +97,7 @@ function httpsPost(url, body) {
 // ---------------------------------------------------------------------------
 
 function parseFlags(argv) {
-  const flags = { nonInteractive: false, apiKey: null, agent: null };
+  const flags = { nonInteractive: false, apiKey: null, agent: null, provision: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "-y" || argv[i] === "--yes") {
       flags.nonInteractive = true;
@@ -107,6 +107,8 @@ function parseFlags(argv) {
     } else if (argv[i] === "--agent" && argv[i + 1]) {
       flags.agent = argv[i + 1];
       i++;
+    } else if (argv[i] === "--provision") {
+      flags.provision = true;
     }
   }
   // Also check environment variable
@@ -224,7 +226,9 @@ export { AGENTS, writeMcpJson, writeGeminiJson };
 // ---------------------------------------------------------------------------
 
 async function runInit(flags = {}) {
-  const { nonInteractive = false, apiKey: flagApiKey = null, agent: flagAgent = null } = flags;
+  const { nonInteractive = false, apiKey: flagApiKey = null, agent: flagAgent = null, provision = false } = flags;
+  // Re-attach provision to flags so the signup block can check it
+  flags.provision = provision;
   const cwd = process.cwd();
   const projectName = path.basename(cwd);
 
@@ -253,39 +257,56 @@ async function runInit(flags = {}) {
   }
   if (!apiKey) {
     if (nonInteractive) {
-      // 5-second countdown warning, then auto-signup
-      process.stderr.write(
-        "\n  No API key provided — a new one will be generated.\n" +
-        "  Press Ctrl+C to cancel.\n  "
-      );
-      for (let i = 5; i > 0; i--) {
-        process.stderr.write(`${i}... `);
-        await new Promise((r) => setTimeout(r, 1000));
-      }
-      process.stderr.write("\n\n");
-    }
-    const email = nonInteractive ? "" : await ask(rl, "Email for account recovery (optional)");
-    console.log("\nSigning up...");
-    try {
-      const body = { workspace };
-      if (email) body.email = email;
-      const resp = await httpsPost(`${DEFAULTS.apiUrl}/v1/auth/signup`, body);
-      if (resp.api_key) {
-        apiKey = resp.api_key;
-        console.log(`  API key: ${apiKey}`);
-      } else if (resp.error) {
-        console.error(`  Signup failed: ${resp.error}`);
-        rl?.close();
-        process.exit(1);
+      // In non-interactive mode, skip signup unless --provision is passed
+      // The expected path for container workspaces is MEMENTO_API_KEY env var
+      if (!flags.provision) {
+        console.log("\n  ⚠ No API key provided (--api-key or MEMENTO_API_KEY env var).");
+        console.log("  Skipping signup. Pass --provision to auto-provision a new key.\n");
       } else {
-        console.error("  Unexpected response:", JSON.stringify(resp));
+        // --provision explicitly passed: auto-signup
+        console.log("\nSigning up...");
+        try {
+          const body = { workspace };
+          const resp = await httpsPost(`${DEFAULTS.apiUrl}/v1/auth/signup`, body);
+          if (resp.api_key) {
+            apiKey = resp.api_key;
+            console.log(`  API key: ${apiKey}`);
+          } else if (resp.error) {
+            console.error(`  Signup failed: ${resp.error}`);
+            process.exit(1);
+          } else {
+            console.error("  Unexpected response:", JSON.stringify(resp));
+            process.exit(1);
+          }
+        } catch (err) {
+          console.error(`  Signup failed: ${err.message}`);
+          process.exit(1);
+        }
+      }
+    } else {
+      const email = await ask(rl, "Email for account recovery (optional)");
+      console.log("\nSigning up...");
+      try {
+        const body = { workspace };
+        if (email) body.email = email;
+        const resp = await httpsPost(`${DEFAULTS.apiUrl}/v1/auth/signup`, body);
+        if (resp.api_key) {
+          apiKey = resp.api_key;
+          console.log(`  API key: ${apiKey}`);
+        } else if (resp.error) {
+          console.error(`  Signup failed: ${resp.error}`);
+          rl?.close();
+          process.exit(1);
+        } else {
+          console.error("  Unexpected response:", JSON.stringify(resp));
+          rl?.close();
+          process.exit(1);
+        }
+      } catch (err) {
+        console.error(`  Signup failed: ${err.message}`);
         rl?.close();
         process.exit(1);
       }
-    } catch (err) {
-      console.error(`  Signup failed: ${err.message}`);
-      rl?.close();
-      process.exit(1);
     }
   }
 
@@ -510,6 +531,25 @@ async function runInit(flags = {}) {
     created.push(result);
   }
 
+  // 9b. CLAUDE.md — append Memento portable section
+  const claudeMdPath = path.join(cwd, "CLAUDE.md");
+  const mementoTemplatePath = path.resolve(__dirname, "..", "templates", "CLAUDE-SECTION.md");
+  try {
+    const section = fs.readFileSync(mementoTemplatePath, "utf-8");
+    if (fs.existsSync(claudeMdPath)) {
+      const existing = fs.readFileSync(claudeMdPath, "utf-8");
+      if (existing.includes("Memento MCP")) {
+        console.log("  · CLAUDE.md (already has memento section)");
+      } else {
+        fs.appendFileSync(claudeMdPath, "\n" + section);
+        created.push("CLAUDE.md (memento section appended)");
+      }
+    } else {
+      fs.writeFileSync(claudeMdPath, section);
+      created.push("CLAUDE.md (created with memento section)");
+    }
+  } catch { /* template not found — skip silently */ }
+
   // 10. Add .memento.json and .memento/scripts/ to .gitignore
   let gitignoreUpdated = false;
   if (appendToGitignore(cwd, ".memento.json")) gitignoreUpdated = true;
@@ -524,6 +564,8 @@ async function runInit(flags = {}) {
     ".mcp.json": "MCP server registered (Claude Code)",
     ".gemini/settings.json": "MCP server registered (Gemini CLI)",
     ".gemini/settings.json (hooks)": "hooks registered with Gemini CLI",
+    "CLAUDE.md (memento section appended)": "portable Memento instructions",
+    "CLAUDE.md (created with memento section)": "portable Memento instructions",
     "(skipped — manual setup)": "MCP config skipped (manual setup)",
     ".gitignore (updated)": "credentials excluded from git",
   };
@@ -597,12 +639,25 @@ async function runUpdate() {
   const versionPath = path.join(cwd, ".memento", "version");
   fs.writeFileSync(versionPath, pkgVersion + "\n");
 
-  // Ensure SessionStart hooks are registered for agents that support hooks
-  // Detect by config agents field or directory presence (older configs may lack agents)
+  // Read .memento.json to determine which hooks are enabled
   const config = readJsonFile(configPath) || {};
   const agents = config.agents || [];
+  const hooks = config.hooks || {};
+  const features = config.features || {};
+
+  // Hook script paths
   const instructionsCmd = path.join(localScriptsDir, "memento-instructions.sh");
+  const recallCmd = path.join(localScriptsDir, "memento-userprompt-recall.sh");
+  const stopCmd = path.join(localScriptsDir, "memento-stop-recall.sh");
+  const precompactCmd = path.join(localScriptsDir, "memento-precompact-distill.sh");
   const sessionStartCmd = path.join(localScriptsDir, "memento-sessionstart-identity.sh");
+
+  // Hook enabled flags (default to true for recall/stop/precompact if not specified)
+  const enableUserPrompt = hooks["userprompt-recall"]?.enabled !== false;
+  const enableStop = hooks["stop-recall"]?.enabled !== false;
+  const enablePreCompact = hooks["precompact-distill"]?.enabled !== false;
+  const enableSessionStart = hooks["sessionstart-identity"]?.enabled && features.identity;
+
   const registeredHooks = [];
 
   // Claude Code
@@ -611,8 +666,12 @@ async function runUpdate() {
   if (hasClaude) {
     const settingsPath = path.join(cwd, ".claude", "settings.local.json");
     const settings = readJsonFile(settingsPath) || {};
-    let changed = ensureHook(settings, "SessionStart", instructionsCmd, 5000);
-    changed = ensureHook(settings, "SessionStart", sessionStartCmd, 10000) || changed;
+    let changed = false;
+    changed = ensureHook(settings, "SessionStart", instructionsCmd, 5000) || changed;
+    if (enableUserPrompt) changed = ensureHook(settings, "UserPromptSubmit", recallCmd, 5000) || changed;
+    if (enableStop) changed = ensureHook(settings, "Stop", stopCmd, 5000) || changed;
+    if (enablePreCompact) changed = ensureHook(settings, "PreCompact", precompactCmd, 30000) || changed;
+    if (enableSessionStart) changed = ensureHook(settings, "SessionStart", sessionStartCmd, 10000) || changed;
     if (changed) {
       writeJsonFile(settingsPath, settings);
       registeredHooks.push("Claude Code → .claude/settings.local.json");
@@ -625,8 +684,12 @@ async function runUpdate() {
   if (hasGemini) {
     const settingsPath = path.join(cwd, ".gemini", "settings.json");
     const settings = readJsonFile(settingsPath) || {};
-    let changed = ensureHook(settings, "SessionStart", instructionsCmd, 5000);
-    changed = ensureHook(settings, "SessionStart", sessionStartCmd, 10000) || changed;
+    let changed = false;
+    changed = ensureHook(settings, "SessionStart", instructionsCmd, 5000) || changed;
+    if (enableUserPrompt) changed = ensureHook(settings, "BeforeAgent", recallCmd, 5000) || changed;
+    if (enableStop) changed = ensureHook(settings, "SessionEnd", stopCmd, 5000) || changed;
+    if (enablePreCompact) changed = ensureHook(settings, "PreCompress", precompactCmd, 30000) || changed;
+    if (enableSessionStart) changed = ensureHook(settings, "SessionStart", sessionStartCmd, 10000) || changed;
     if (changed) {
       writeJsonFile(settingsPath, settings);
       registeredHooks.push("Gemini CLI → .gemini/settings.json");
@@ -692,6 +755,7 @@ if (isMain) {
     -y, --yes          Non-interactive mode (uses defaults, for CI/scripting)
     --api-key KEY      Provide API key (skips signup prompt)
     --agent AGENT      Select agent: claude-code, gemini, or manual
+    --provision        Auto-provision a new API key in non-interactive mode
 
   The -y flag enables fully non-interactive setup. Combine with --agent
   to select a specific agent (defaults to auto-detect, then claude-code).
